@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { emotionSelectionSchema, unknownEmotion } from "../emotions";
 export const MAX_HISTORY_MESSAGES = 80;
 export const messageSchema = z
   .object({ role: z.enum(["user", "assistant"]), content: z.string().min(1).max(4000) })
@@ -10,7 +11,9 @@ export const chatSchema = z
     token: z.string().max(4096),
     history: z.array(messageSchema).max(MAX_HISTORY_MESSAGES),
     message: z.string().trim().min(1).max(4000),
-    action: z.enum(["chat", "summary"]).default("chat"),
+    action: z.enum(["chat", "summary", "continue"]).default("chat"),
+    messageId: z.string().uuid().optional(),
+    emotion: emotionSelectionSchema.default(unknownEmotion),
   })
   .strict();
 export const replySchema = z

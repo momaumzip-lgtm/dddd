@@ -2,6 +2,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { createHash, randomUUID } from "node:crypto";
 import type { Message } from "../config";
 import type { Safety } from "./schemas";
+import { progressSchema, freshProgress, type Progress } from "../conversation";
 import { AppError } from "./errors";
 const secret = () => {
   if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)
@@ -59,7 +60,8 @@ export const state = (
   safety: Safety,
   stage: string,
   revision: number,
-) => sign({ kind: "state", sid, cid, hash: hash(history), safety, stage, revision });
+  progress: Progress = freshProgress,
+) => sign({ kind: "state", sid, cid, hash: hash(history), safety, stage, revision, progress });
 export async function validateState(
   cookie: string | undefined,
   token: string,
@@ -83,5 +85,6 @@ export async function validateState(
     safety: p.safety as Safety,
     stage: String(p.stage),
     revision: p.revision as number,
+    progress: progressSchema.parse(p.progress || freshProgress),
   };
 }

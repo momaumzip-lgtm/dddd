@@ -1523,3 +1523,228 @@ dialog .fine-print {
     scroll-behavior: auto !important;
   }
 }
+
+/* Emotion selection and short conversation flow */
+.emotion-picker {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 34px;
+  scrollbar-gutter: stable;
+}
+.emotion-picker h1 {
+  font-family: var(--serif);
+  font-size: clamp(1.65rem, 2.3vw, 2.15rem);
+  line-height: 1.45;
+  margin: 10px 0 12px;
+  letter-spacing: -0.035em;
+}
+.emotion-picker > p {
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+.emotion-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 20px 0 12px;
+}
+.emotion-tabs button {
+  border-bottom: 2px solid transparent;
+  padding: 8px 12px;
+  min-height: 48px;
+}
+.emotion-tabs button[aria-pressed="true"] {
+  border-color: var(--green);
+  font-weight: 700;
+}
+.emotion-picker input {
+  width: 100%;
+  background: #f7f9f5;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font: inherit;
+  min-height: 48px;
+}
+.emotion-catalog {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 12px 4px;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.emotion-catalog button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  border: 1px solid #d6e1d5;
+  border-radius: 24px;
+  background: #fff;
+  padding: 7px 15px;
+}
+.emotion-catalog button:hover,
+.emotion-catalog button[aria-pressed="true"] {
+  border-color: var(--green);
+  background: var(--soft);
+}
+.emotion-catalog small {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.emotion-picker .catalog-hint {
+  margin: 6px 0 10px;
+  font-size: 0.85rem;
+}
+.emotion-alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.emotion-alternatives button {
+  min-height: 48px;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+.selection-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin: 20px 0;
+  background: var(--soft);
+  border: 1px solid #c4d5c2;
+  border-radius: 16px;
+}
+.selection-card strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.selection-card button {
+  min-height: 48px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.intensity-picker {
+  border: 0;
+  padding: 0;
+  margin: 24px 0 8px;
+}
+.intensity-picker legend {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+.intensity-picker > p {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin: 8px 0 14px;
+}
+.intensity-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.intensity-options button {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 64px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+}
+.intensity-options button[aria-pressed="true"] {
+  border: 2px solid var(--green);
+  background: var(--soft);
+  padding: 11px;
+}
+.intensity-options button svg {
+  position: absolute;
+  right: 10px;
+  top: 12px;
+}
+.intensity-options span {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.emotion-start {
+  padding: 16px 0 4px;
+}
+.emotion-start p {
+  font-size: 0.85rem;
+  margin-bottom: 10px;
+}
+.emotion-start .primary {
+  width: 100%;
+  min-height: 52px;
+}
+.current-emotion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 26px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+.current-emotion button {
+  min-height: 48px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.current-emotion small {
+  margin-left: auto;
+  color: var(--muted);
+}
+.completion-card {
+  background: var(--soft);
+  border: 1px solid #c4d5c2;
+  border-radius: 18px;
+  padding: 22px;
+  margin: 20px 0;
+}
+.completion-card h2 {
+  font-size: 1.2rem;
+  margin: 8px 0;
+}
+.partial-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.composer[hidden] {
+  display: none;
+}
+.app-shell:has(.emotion-picker) .side-copy h1 {
+  font-size: 2rem;
+}
+@media (max-width: 600px) {
+  .emotion-picker {
+    padding: 20px;
+  }
+  .emotion-catalog {
+    max-height: 220px;
+  }
+  .emotion-tabs {
+    gap: 0;
+  }
+  .emotion-tabs button {
+    padding: 8px 10px;
+  }
+  .current-emotion {
+    padding: 2px 18px;
+    gap: 8px;
+  }
+  .current-emotion small {
+    font-size: 0.75rem;
+  }
+  .intensity-options {
+    gap: 8px;
+  }
+}

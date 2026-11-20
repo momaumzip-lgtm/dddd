@@ -14,29 +14,38 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { emotions, greeting, type Message, type PublicConfig } from "@/lib/config";
+import { type Message, type PublicConfig } from "@/lib/config";
 import { z } from "zod";
 import Survey from "./Survey";
 import BrandMark from "./BrandMark";
 import QuietGarden from "./QuietGarden";
-import EmotionMark from "./EmotionMark";
+import EmotionPicker from "./EmotionPicker";
+import {
+  emotionLabel,
+  intensityBands,
+  emotionSelectionSchema,
+  type EmotionSelection,
+} from "@/lib/emotions";
+import { readChatStream } from "@/lib/browser/chat-stream";
 import { installPagePrivacy } from "@/lib/browser/privacy";
 const sessionResponse = z.object({ conversationId: z.string().uuid(), token: z.string() });
-const chatResponse = z.object({
-  requestId: z.string().uuid(),
-  conversationId: z.string().uuid(),
-  text: z.string(),
-  token: z.string(),
-  notice: z.boolean(),
-  help: z.boolean(),
-  conversationLimit: z.boolean().optional(),
-});
 const errorResponse = z.object({ error: z.string(), code: z.string().optional() });
 class VisibleError extends Error {}
 type Session = { conversationId: string; token: string };
-type Pending = { text: string; action: "chat" | "summary" };
-type Panel = "help" | "privacy" | "diary" | "reset" | "survey" | null;
+type Pending = { text: string; action: "chat" | "summary" | "continue"; messageId?: string };
+type Panel = "help" | "privacy" | "diary" | "reset" | "survey" | "emotion" | null;
 export default function Chat({ config }: { config: PublicConfig }) {
+  const [started, setStarted] = useState(false),
+    [emotion, setEmotion] = useState<EmotionSelection | null>(null),
+    [complete, setComplete] = useState(false),
+    [turns, setTurns] = useState(0),
+    [streamText, setStreamText] = useState("");
+  const emotionRef = useRef<EmotionSelection | null>(null),
+    continueRef = useRef(false);
+  const selectEmotion = (value: EmotionSelection) => {
+    emotionRef.current = value;
+    setEmotion(value);
+  };
   const [history, setHistory] = useState<Message[]>([]),
     [draft, setDraft] = useState("");
   const [session, setSession] = useState<Session | null>(null),
@@ -68,6 +77,13 @@ export default function Chat({ config }: { config: PublicConfig }) {
     controller.current?.abort();
     running.current = false;
     setHistory([]);
+    setStarted(false);
+    setEmotion(null);
+    emotionRef.current = null;
+    setComplete(false);
+    setTurns(0);
+    setStreamText("");
+    continueRef.current = false;
     setDraft("");
     setSession(null);
     setPending(null);
@@ -106,7 +122,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
       thread.current?.scrollTo({ top: thread.current.scrollHeight });
       setUnread(false);
     } else setUnread(true);
-  }, [history, pending, status]);
+  }, [history, pending, status, streamText]);
   const jump = () => {
     nearBottom.current = true;
     thread.current?.scrollTo({
@@ -116,8 +132,13 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setUnread(false);
   };
   async function send(item?: Pending) {
-    if (running.current || conversationLimit || sessionInvalid) return;
-    const request = item || { text: draft.trim(), action: "chat" as const };
+    if (running.current || conversationLimit || sessionInvalid || (!item && complete)) return;
+    const request: Pending = item || {
+      text: draft.trim(),
+      action: continueRef.current ? "continue" : "chat",
+      messageId: crypto.randomUUID(),
+    };
+    request.messageId ||= crypto.randomUUID();
     if (!request.text || request.text.length > config.maxInput) return;
     if (!acknowledged) {
       setPanel("privacy");
@@ -128,10 +149,14 @@ export default function Chat({ config }: { config: PublicConfig }) {
     const abort = new AbortController();
     controller.current = abort;
     setPending(request);
+    setStreamText("");
     setStatus("waiting");
     setError("");
     nearBottom.current = true;
     const requestId = crypto.randomUUID();
+    performance.mark("chat-send:" + requestId);
+    requestAnimationFrame(() => performance.mark("chat-ack:" + requestId));
+    let firstText = false;
     try {
       let active = session;
       if (!active) {
@@ -147,11 +172,15 @@ export default function Chat({ config }: { config: PublicConfig }) {
         if (epoch !== generation.current) return;
         setSession(active);
       }
+      const sentEmotion = emotionRef.current;
+      const selectedVersion = sentEmotion?.version;
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
         body: JSON.stringify({
           requestId,
+          messageId: request.messageId,
+          emotion: sentEmotion,
           conversationId: active.conversationId,
           token: active.token,
           history,
@@ -160,19 +189,31 @@ export default function Chat({ config }: { config: PublicConfig }) {
         }),
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(90000)]),
       });
-      const raw = await response.json();
-      if (epoch !== generation.current) return;
       if (!response.ok) {
-        const failed = errorResponse.parse(raw);
+        const failed = errorResponse.parse(await response.json());
         if (failed.code === "CONTEXT") setConversationLimit(true);
-        if (["STATE", "STALE", "SESSION"].includes(failed.code || "")) setSessionInvalid(true);
         throw new VisibleError(failed.error);
       }
-      const data = chatResponse.parse(raw);
-      if (data.requestId !== requestId || data.conversationId !== active.conversationId) {
-        setSessionInvalid(true);
-        throw new VisibleError("대화 상태가 달라졌어요. 새 대화를 시작해 주세요.");
-      }
+      const data = await readChatStream(response, requestId, (text) => {
+        if (epoch === generation.current) {
+          setStreamText(text);
+          if (!firstText) {
+            firstText = true;
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => performance.mark("chat-first-paint:" + requestId)),
+            );
+          }
+        }
+      });
+      if (epoch !== generation.current) return;
+      if (data.conversationId !== active.conversationId)
+        throw new VisibleError("대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.");
+      if (emotionRef.current?.version === selectedVersion)
+        selectEmotion(emotionSelectionSchema.parse(data.emotion));
+      performance.mark("chat-done:" + requestId);
+      setComplete(data.completed);
+      setTurns(data.turns);
+      continueRef.current = false;
       setHistory([
         ...history,
         { role: "user", content: request.text },
@@ -180,11 +221,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
       ]);
       setSession({ ...active, token: data.token });
       setPending(null);
+      setStreamText("");
       setDraft(data.notice ? request.text : "");
       setStatus("idle");
       setHelp(data.help);
       setConversationLimit(data.conversationLimit === true);
-      if (request.action === "summary") {
+      if (data.completed) {
         setDiary(data.text);
         if (!data.notice && !data.help) setSurveyInvite(true);
       }
@@ -197,8 +239,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
       } else {
         setStatus("error");
         setError(
-          e instanceof VisibleError
-            ? e.message
+          e instanceof Error
+            ? e.message + " (요청 " + requestId.slice(0, 8) + ")"
             : "답변을 받지 못했어요. 연결을 확인하고 다시 시도해 주세요.",
         );
       }
@@ -212,7 +254,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
   const summary = () => {
     setPanel(null);
     void send({
-      text: "지금까지 제가 말한 내용만으로 오늘의 깨달음을 짧게 정리해 주세요. 말하지 않은 내용은 빈칸으로 남겨 주세요.",
+      text: "지금까지 이야기한 내용을 정리해 주세요.",
       action: "summary",
     });
   };
@@ -247,9 +289,9 @@ export default function Chat({ config }: { config: PublicConfig }) {
               <span /> 오늘의 마음을 위한 자리
             </span>
             <h1>
-              잠깐,
+              마음에,
               <br />
-              <em>내 마음</em>부터.
+              <em>작은 여백</em>을.
             </h1>
             <p>
               바쁜 하루에 잠깐의 여백을.
@@ -264,7 +306,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
           <div className="privacy-note">
             <ShieldCheck size={19} />
             <div>
-              <strong>이곳에만 머무는 대화</strong>
+              <strong>저장하지 않는 대화</strong>
               <p>
                 앱은 대화를 저장하지 않아요.
                 <br />
@@ -287,241 +329,277 @@ export default function Chat({ config }: { config: PublicConfig }) {
             </div>
             <span className="ai-label">AI 도우미</span>
           </div>
-          <div
-            className="thread"
-            ref={thread}
-            onScroll={() => {
-              const el = thread.current;
-              if (el) {
-                nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
-                if (nearBottom.current) setUnread(false);
-              }
-            }}
-          >
-            <div className="day-label">
-              <span />
-              오늘, 이 순간
-              <span />
-            </div>
-            {!history.length && !pending && (
-              <div className="welcome-copy">
-                <h2>오늘의 마음, 여기에.</h2>
-                <p>말이 정리되지 않아도 괜찮아요.</p>
-              </div>
-            )}
-            <div className="message assistant">
-              <span className="avatar" aria-hidden="true">
-                <BrandMark />
-              </span>
-              <div>
-                <span className="sender">
-                  {config.name}
-                  <span>AI</span>
+          {!started ? (
+            <EmotionPicker
+              value={emotion}
+              onDone={(value) => {
+                selectEmotion(value);
+                setStarted(true);
+                if (!acknowledged) setPanel("privacy");
+              }}
+            />
+          ) : (
+            <>
+              <div className="current-emotion">
+                <span>
+                  {emotion ? emotionLabel(emotion) : "미정"} ·{" "}
+                  {intensityBands.find((b) => b.id === emotion?.intensityBand)?.label ||
+                    "강도 미정"}
                 </span>
-                <p className="bubble">{greeting}</p>
+                <button onClick={() => setPanel("emotion")}>바꾸기</button>
+                <small>
+                  {complete
+                    ? "오늘의 정리"
+                    : help
+                      ? "안전 확인"
+                      : "짧은 대화 · " + Math.min(turns + 1, 3) + " / 3"}
+                </small>
               </div>
-            </div>
-            {!history.length && !pending && (
-              <div className="emotion-area">
-                <p>이런 마음으로 시작해도 좋아요</p>
-                <div className="emotion-list">
-                  {emotions.map((label, i) => (
+              <div
+                className="thread"
+                ref={thread}
+                onScroll={() => {
+                  const el = thread.current;
+                  if (el) {
+                    nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+                    if (nearBottom.current) setUnread(false);
+                  }
+                }}
+              >
+                <div className="day-label">
+                  <span />
+                  오늘, 이 순간
+                  <span />
+                </div>
+                {!history.length && !pending && (
+                  <div className="welcome-copy">
+                    <h2>어떤 일이 있었나요?</h2>
+                    <p>한 문장만 적어도 괜찮아요. 고른 감정은 이미 전해졌어요.</p>
+                  </div>
+                )}
+                <div className="intro-note">
+                  <ShieldCheck size={17} />
+                  <p>
+                    AI 대화는 전문 상담·진료를 대신하지 않아요. 입력은 외부 AI로 전달되니 개인정보는
+                    적지 마세요.{" "}
+                    <button onClick={() => setPanel("privacy")}>자세히 알아보기</button>
+                  </p>
+                </div>
+                {(!config.ready || config.development) && (
+                  <p className="setup-note" role="status">
+                    {!config.ready
+                      ? "AI 연결을 준비 중이에요. 도움 받기와 일기 틀을 이용할 수 있어요."
+                      : "현재 시범 운영 중이에요. 이용·개인정보 안내를 확인해 주세요."}
+                  </p>
+                )}
+                {history.map((message, i) =>
+                  complete &&
+                  !help &&
+                  i === history.length - 1 &&
+                  message.role === "assistant" ? null : (
+                    <div key={i} className={`message ${message.role}`}>
+                      {message.role === "assistant" && (
+                        <span className="avatar" aria-hidden="true">
+                          <BrandMark />
+                        </span>
+                      )}
+                      <div>
+                        {message.role === "assistant" && (
+                          <span className="sender">
+                            {config.name}
+                            <span>AI</span>
+                          </span>
+                        )}
+                        <p className="bubble">{message.content}</p>
+                      </div>
+                    </div>
+                  ),
+                )}
+                {pending && (
+                  <div className="message user">
+                    <p className="bubble">{pending.text}</p>
+                  </div>
+                )}
+                {streamText && (
+                  <div className="message assistant">
+                    <p className="bubble">
+                      {streamText}
+                      {status !== "waiting" && (
+                        <small className="partial-note"> · 답변이 중단됐어요</small>
+                      )}
+                    </p>
+                  </div>
+                )}
+                {status === "waiting" && (
+                  <div className="waiting" role="status">
+                    <LoaderCircle size={17} className="spin" />
+                    {streamText ? "답변을 이어서 받고 있어요…" : "보내주신 이야기를 읽고 있어요…"}
+                  </div>
+                )}
+                {error && (
+                  <div className="error-note" role="alert">
+                    <p>{error}</p>
+                    {pending && status !== "waiting" && !sessionInvalid && !conversationLimit && (
+                      <button onClick={() => void send(pending)}>
+                        <RotateCcw size={16} />
+                        다시 답변 받기
+                      </button>
+                    )}
+                  </div>
+                )}
+                {help && (
+                  <div className="inline-help">
+                    <p>지금 필요한 현실의 도움을 확인해 주세요.</p>
+                    <button onClick={() => setPanel("help")}>도움 받을 곳 보기</button>
+                  </div>
+                )}
+                {(conversationLimit || sessionInvalid) && (
+                  <div className="conversation-limit" role="status">
+                    <p>
+                      {sessionInvalid
+                        ? "새 대화에서 이어가 주세요."
+                        : "이번 대화는 여기까지 담을 수 있어요."}
+                    </p>
+                    <p>
+                      {sessionInvalid
+                        ? "연결 중단이나 만료로 대화 상태를 확인하지 못했어요. 필요한 내용은 일기 틀에 직접 정리한 뒤 새 대화를 시작해 주세요."
+                        : "대화 길이에 도달했어요. 일기 틀에 직접 정리하거나 새 대화를 시작해 주세요."}
+                    </p>
+                    <div>
+                      <button onClick={() => setPanel("diary")}>일기 틀 열기</button>
+                      <button onClick={() => setPanel("reset")}>새 대화 시작</button>
+                    </div>
+                  </div>
+                )}
+                {complete && !help && (
+                  <section className="completion-card" aria-label="오늘의 정리">
+                    <span className="eyebrow">나를 알아가는 시간</span>
+                    <h2>오늘의 정리</h2>
+                    <p>{diary}</p>
                     <button
-                      key={label}
-                      data-emotion={i}
-                      aria-pressed={draft === label}
+                      className="primary"
                       onClick={() => {
-                        setDraft(label);
+                        setComplete(false);
+                        continueRef.current = true;
+                        setSurveyInvite(false);
                         input.current?.focus();
                       }}
                     >
-                      <EmotionMark index={i} />
-                      {label}
+                      이어서 이야기하기
                     </button>
-                  ))}
-                </div>
-                <span className="draft-hint">누르면 입력창에 담겨요. 편하게 덧붙여도 좋아요.</span>
-              </div>
-            )}
-            <div className="intro-note">
-              <ShieldCheck size={17} />
-              <p>
-                AI 대화는 전문 상담·진료를 대신하지 않아요. 입력은 외부 AI로 전달되니 개인정보는
-                적지 마세요. <button onClick={() => setPanel("privacy")}>자세히 알아보기</button>
-              </p>
-            </div>
-            {(!config.ready || config.development) && (
-              <p className="setup-note" role="status">
-                {!config.ready
-                  ? "AI 연결을 준비 중이에요. 도움 받기와 일기 틀을 이용할 수 있어요."
-                  : "현재 시범 운영 중이에요. 이용·개인정보 안내를 확인해 주세요."}
-              </p>
-            )}
-            {history.map((message, i) => (
-              <div key={i} className={`message ${message.role}`}>
-                {message.role === "assistant" && (
-                  <span className="avatar" aria-hidden="true">
-                    <BrandMark />
-                  </span>
+                  </section>
                 )}
-                <div>
-                  {message.role === "assistant" && (
-                    <span className="sender">
-                      {config.name}
-                      <span>AI</span>
-                    </span>
-                  )}
-                  <p className="bubble">{message.content}</p>
-                </div>
-              </div>
-            ))}
-            {pending && (
-              <div className="message user">
-                <p className="bubble">{pending.text}</p>
-              </div>
-            )}
-            {status === "waiting" && (
-              <div className="waiting" role="status">
-                <LoaderCircle size={17} className="spin" />
-                마음을 담아 답변을 준비하고 있어요…
-              </div>
-            )}
-            {error && (
-              <div className="error-note" role="alert">
-                <p>{error}</p>
-                {pending && status !== "waiting" && !sessionInvalid && !conversationLimit && (
-                  <button onClick={() => void send(pending)}>
-                    <RotateCcw size={16} />
-                    다시 답변 받기
-                  </button>
+                {surveyInvite && !help && (
+                  <div className="survey-invite">
+                    <span className="eyebrow">오늘의 대화를 마무리하며</span>
+                    <p>이 시간이 어떠셨는지 들려주실래요?</p>
+                    <button onClick={() => setPanel("survey")}>짧은 사용 경험 설문</button>
+                    <small>선택 참여 · 채팅 내용은 보내지 않아요</small>
+                  </div>
                 )}
               </div>
-            )}
-            {help && (
-              <div className="inline-help">
-                <p>지금 필요한 현실의 도움을 확인해 주세요.</p>
-                <button onClick={() => setPanel("help")}>도움 받을 곳 보기</button>
-              </div>
-            )}
-            {(conversationLimit || sessionInvalid) && (
-              <div className="conversation-limit" role="status">
-                <p>
-                  {sessionInvalid
-                    ? "새 대화에서 이어가 주세요."
-                    : "이번 대화는 여기까지 담을 수 있어요."}
-                </p>
-                <p>
-                  {sessionInvalid
-                    ? "연결 중단이나 만료로 대화 상태를 확인하지 못했어요. 필요한 내용은 일기 틀에 직접 정리한 뒤 새 대화를 시작해 주세요."
-                    : "대화 길이에 도달했어요. 일기 틀에 직접 정리하거나 새 대화를 시작해 주세요."}
-                </p>
-                <div>
-                  <button onClick={() => setPanel("diary")}>일기 틀 열기</button>
-                  <button onClick={() => setPanel("reset")}>새 대화 시작</button>
-                </div>
-              </div>
-            )}
-            {surveyInvite && !help && (
-              <div className="survey-invite">
-                <span className="eyebrow">오늘의 대화를 마무리하며</span>
-                <p>이 시간이 어떠셨는지 들려주실래요?</p>
-                <button onClick={() => setPanel("survey")}>짧은 사용 경험 설문</button>
-                <small>선택 참여 · 채팅 내용은 보내지 않아요</small>
-              </div>
-            )}
-          </div>
-          {unread && (
-            <button className="unread" onClick={jump}>
-              <MessageCircle size={16} />새 답변 보기
-            </button>
-          )}
-          <footer className="composer">
-            <div className="composer-actions">
-              <button className="diary-button" onClick={() => setPanel("diary")}>
-                <BookOpen size={16} />
-                오늘의 깨달음 정리
-              </button>
-              {!help && (
-                <button
-                  className="survey-button"
-                  disabled={status === "waiting"}
-                  onClick={() => setPanel("survey")}
-                >
-                  <ClipboardList size={16} />
-                  마무리 설문
+              {unread && (
+                <button className="unread" onClick={jump}>
+                  <MessageCircle size={16} />새 답변 보기
                 </button>
               )}
-            </div>
-            <form
-              autoComplete="off"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void send();
-              }}
-            >
-              <label className="sr-only" htmlFor="message">
-                지금의 마음을 적어 주세요
-              </label>
-              <textarea
-                id="message"
-                autoComplete="off"
-                ref={input}
-                value={draft}
-                maxLength={config.maxInput}
-                placeholder="오늘의 마음을 들려주세요…"
-                rows={1}
-                disabled={status === "waiting"}
-                onChange={(e) => setDraft(e.target.value)}
-                onCompositionStart={() => {
-                  ime.current = true;
-                }}
-                onCompositionEnd={() => {
-                  ime.current = false;
-                }}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !ime.current &&
-                    !e.nativeEvent.isComposing &&
-                    e.keyCode !== 229 &&
-                    matchMedia("(pointer: fine)").matches
-                  ) {
+              <footer className="composer" hidden={complete}>
+                <div className="composer-actions">
+                  <button
+                    className="diary-button"
+                    disabled={status === "waiting" || !history.length}
+                    onClick={summary}
+                  >
+                    <BookOpen size={16} />
+                    지금 정리하기
+                  </button>
+                  {!help && (
+                    <button
+                      className="survey-button"
+                      disabled={status === "waiting"}
+                      onClick={() => setPanel("survey")}
+                    >
+                      <ClipboardList size={16} />
+                      마무리 설문
+                    </button>
+                  )}
+                </div>
+                <form
+                  autoComplete="off"
+                  onSubmit={(e) => {
                     e.preventDefault();
                     void send();
-                  }
-                }}
-              />
-              {status === "waiting" ? (
-                <button
-                  type="button"
-                  className="send-button"
-                  aria-label="답변 받기 중단"
-                  onClick={() => controller.current?.abort()}
+                  }}
                 >
-                  <Square size={17} />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  className="send-button"
-                  disabled={!draft.trim() || conversationLimit || sessionInvalid}
-                  aria-label="메시지 전송"
-                >
-                  <Send size={19} />
-                </button>
-              )}
-            </form>
-            <div className="composer-meta">
-              <button onClick={() => setPanel("privacy")}>
-                <ShieldCheck size={13} />
-                이용·개인정보 안내
-              </button>
-              <span aria-live="off">
-                {draft.length.toLocaleString()} / {config.maxInput.toLocaleString()}
-              </span>
-            </div>
-          </footer>
+                  <label className="sr-only" htmlFor="message">
+                    지금의 마음을 적어 주세요
+                  </label>
+                  <textarea
+                    id="message"
+                    autoComplete="off"
+                    ref={input}
+                    value={draft}
+                    maxLength={config.maxInput}
+                    placeholder={
+                      history.length
+                        ? "편하게 이어서 적어주세요…"
+                        : "어떤 일이 있었나요? 한 문장도 괜찮아요."
+                    }
+                    rows={1}
+                    disabled={status === "waiting"}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onCompositionStart={() => {
+                      ime.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      ime.current = false;
+                    }}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === "Enter" &&
+                        !e.shiftKey &&
+                        !ime.current &&
+                        !e.nativeEvent.isComposing &&
+                        e.keyCode !== 229 &&
+                        matchMedia("(pointer: fine)").matches
+                      ) {
+                        e.preventDefault();
+                        void send();
+                      }
+                    }}
+                  />
+                  {status === "waiting" ? (
+                    <button
+                      type="button"
+                      className="send-button"
+                      aria-label="답변 받기 중단"
+                      onClick={() => controller.current?.abort()}
+                    >
+                      <Square size={17} />
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="send-button"
+                      disabled={!draft.trim() || conversationLimit || sessionInvalid}
+                      aria-label="메시지 전송"
+                    >
+                      <Send size={19} />
+                    </button>
+                  )}
+                </form>
+                <div className="composer-meta">
+                  <button onClick={() => setPanel("privacy")}>
+                    <ShieldCheck size={13} />
+                    이용·개인정보 안내
+                  </button>
+                  <span aria-live="off">
+                    {draft.length.toLocaleString()} / {config.maxInput.toLocaleString()}
+                  </span>
+                </div>
+              </footer>
+            </>
+          )}
         </section>
       </div>
       <div className="page-footer">
@@ -540,6 +618,16 @@ export default function Chat({ config }: { config: PublicConfig }) {
             <X size={22} />
           </button>
         </div>
+        {panel === "emotion" && (
+          <EmotionPicker
+            value={emotion}
+            onDone={(value) => {
+              selectEmotion(value);
+              setPanel(null);
+            }}
+            onCancel={() => setPanel(null)}
+          />
+        )}
         {panel === "help" && (
           <>
             <h2 id="panel-title">혼자 견디지 않아도 괜찮아요</h2>

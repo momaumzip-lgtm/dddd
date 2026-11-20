@@ -3,9 +3,11 @@ import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { classificationSchema, replySchema, type Safety } from "./schemas";
-import { SYSTEM_PROMPT, PROMPT_VERSION } from "./prompts";
+import { BRIEF_PROMPT, SYSTEM_PROMPT, PROMPT_VERSION } from "./prompts";
 import { AppError } from "./errors";
 import type { Message } from "../config";
+import { ReplyFields } from "./stream-fields";
+import { streamReplySchema, type StreamReply, type StreamContext } from "./stream-chat";
 import { normalizeReply } from "./safety";
 const moderationSchema = z.object({
   flagged: z.boolean(),
@@ -13,7 +15,7 @@ const moderationSchema = z.object({
 });
 export const AI_REQUEST_BUDGET_MS = 45000;
 const CALL_TIMEOUT_MS = 12000;
-type Options = { fetch?: typeof fetch; signal?: AbortSignal };
+type Options = { fetch?: typeof fetch; signal?: AbortSignal; requestId?: string };
 function abortError(signal: AbortSignal) {
   return signal.reason?.name === "TimeoutError"
     ? new AppError(
@@ -50,12 +52,14 @@ function within<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
 export class AI {
   private client: OpenAI;
   private signal: AbortSignal;
+  private requestId?: string;
   constructor(
     private model: string,
     private output: number,
     options: Options = {},
   ) {
     this.model = model.trim();
+    this.requestId = options.requestId;
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey || !this.model)
       throw new AppError(
@@ -203,6 +207,74 @@ export class AI {
       input,
     );
     return normalizeReply(reply, noQuestions);
+  }
+
+  async streamReply(
+    input: Message[],
+    context: StreamContext,
+    onSentence: (sentence: string, header: { mode: string; safety: string }) => Promise<void>,
+  ) {
+    return this.request(async (signal) => {
+      const schema = context.forceComplete
+        ? streamReplySchema.extend({ mode: z.enum(["complete", "safety", "refusal"]) })
+        : streamReplySchema;
+      const stream = await this.client.responses.create(
+        {
+          model: this.model,
+          store: false,
+          service_tier: "default",
+          stream: true,
+          ...(this.model === "gpt-5-nano" ? { reasoning: { effort: "minimal" as const } } : {}),
+          max_output_tokens: this.output,
+          instructions:
+            BRIEF_PROMPT + "\n검증된 현재 상태(JSON 데이터): " + JSON.stringify(context),
+          input,
+          text: { format: zodTextFormat(schema, "brief_reply") },
+        },
+        { signal },
+      );
+      const fields = new ReplyFields();
+      let raw = "",
+        completed = false;
+      let final: StreamReply | undefined;
+      for await (const event of stream) {
+        if (event.type === "response.output_text.delta") {
+          raw += event.delta;
+          if (raw.length > 16000)
+            throw new AppError(502, "FORMAT", "답변 형식을 확인하지 못했어요.");
+          for (const sentence of fields.push(event.delta))
+            await onSentence(sentence, { mode: fields.mode, safety: fields.safety });
+        } else if (event.type === "response.completed") {
+          if (
+            event.response.status !== "completed" ||
+            event.response.error ||
+            event.response.incomplete_details
+          )
+            throw new AppError(502, "INCOMPLETE", "답변을 완성하지 못했어요.");
+          final = schema.parse(JSON.parse(raw));
+          completed = true;
+          console.info("chat_usage", {
+            requestId: this.requestId,
+            model: this.model,
+            inputTokens: event.response.usage?.input_tokens,
+            outputTokens: event.response.usage?.output_tokens,
+          });
+        } else if (
+          event.type === "response.failed" ||
+          event.type === "response.incomplete" ||
+          event.type === "error" ||
+          event.type === "response.refusal.delta"
+        )
+          throw new AppError(502, "INCOMPLETE", "답변을 완성하지 못했어요. 다시 요청할 수 있어요.");
+      }
+      if (!completed || !final)
+        throw new AppError(
+          502,
+          "STREAM_INTERRUPTED",
+          "답변 연결이 끊겼어요. 다시 요청할 수 있어요.",
+        );
+      return final;
+    });
   }
   async audit(input: Message[], candidate: string, summary = false) {
     const review = await this.structured(
