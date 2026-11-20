@@ -15,8 +15,16 @@ export const chatSchema = z
   .strict();
 export const replySchema = z
   .object({
-    body: z.string().min(1).max(1000),
-    question: z.string().max(180).nullable(),
+    body: z
+      .string()
+      .min(1)
+      .max(1000)
+      .regex(/^[^?？]*$/),
+    question: z
+      .string()
+      .max(180)
+      .regex(/^$|^[^?？]*[?？]$/)
+      .nullable(),
     stage: z.enum(["emotion", "thought", "need", "diary", "listen", "end"]),
     safety: z.enum(["normal", "check", "emergency", "violence"]),
   })
