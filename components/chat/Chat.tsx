@@ -480,6 +480,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       className="primary"
                       onClick={() => {
                         setComplete(false);
+                        setTurns(0);
                         continueRef.current = true;
                         setSurveyInvite(false);
                         input.current?.focus();

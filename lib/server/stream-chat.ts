@@ -154,10 +154,10 @@ export async function runStreamingChat(
           if (plan.forceComplete && h.mode !== "complete")
             throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
           const isQuestion =
-            /[?？]|(?:나요|까요|습니까|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
+            /[?？؟﹖]|(?:나요|까요|습니까|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
               sentence,
             );
-          if (isQuestion) questions += Math.max(1, (sentence.match(/[?？]/g) || []).length);
+          if (isQuestion) questions += Math.max(1, (sentence.match(/[?？؟﹖]/g) || []).length);
           if (isQuestion && (questions > 1 || h.mode === "complete" || plan.forceComplete))
             throw new AppError(
               502,

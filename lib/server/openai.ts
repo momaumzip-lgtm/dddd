@@ -120,7 +120,11 @@ export class AI {
           model: this.model,
           store: false,
           service_tier: "default",
-          ...(this.model === "gpt-5-nano" ? { reasoning: { effort: "minimal" as const } } : {}),
+          ...(this.model === "gpt-5-nano"
+            ? { reasoning: { effort: "minimal" as const } }
+            : this.model === "gpt-6-luna"
+              ? { reasoning: { effort: "none" as const } }
+              : {}),
           max_output_tokens: this.output,
           instructions,
           input,
@@ -224,7 +228,7 @@ export class AI {
                   .string()
                   .min(1)
                   .max(1200)
-                  .regex(/^[^?？]*$/),
+                  .regex(/^[^?？؟﹖]*$/),
               )
               .min(1)
               .max(6),
@@ -236,7 +240,11 @@ export class AI {
           store: false,
           service_tier: "default",
           stream: true,
-          ...(this.model === "gpt-5-nano" ? { reasoning: { effort: "low" as const } } : {}),
+          ...(this.model === "gpt-5-nano"
+            ? { reasoning: { effort: "low" as const } }
+            : this.model === "gpt-6-luna"
+              ? { reasoning: { effort: "none" as const } }
+              : {}),
           max_output_tokens: this.output,
           instructions:
             BRIEF_PROMPT +
