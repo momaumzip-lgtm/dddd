@@ -132,12 +132,19 @@ export class AI {
       response.output.some(
         (item) => item.type === "message" && item.content.some((part) => part.type === "refusal"),
       )
-    )
+    ) {
+      console.warn("ai_structured_incomplete", {
+        phase: name,
+        completed: response.status === "completed",
+        parsed: Boolean(response.output_parsed),
+        outputTokens: response.usage?.output_tokens,
+      });
       throw new AppError(
         502,
         "EMPTY",
         "답변을 완성하지 못했어요. 입력은 그대로 두고 다시 시도해 주세요.",
       );
+    }
     return response.output_parsed as z.infer<T>;
   }
   classify(input: Message[], signals: unknown, previous: Safety) {

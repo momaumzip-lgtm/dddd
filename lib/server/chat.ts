@@ -52,6 +52,7 @@ export async function runChat(
   let safety = args.safety,
     stage = args.stage,
     body = "",
+    phase = "input_moderation",
     notice = false,
     committed = false;
   try {
@@ -60,6 +61,7 @@ export async function runChat(
     else {
       try {
         const inputCheck = await ai.moderate(messages.map((m) => m.content).join("\n"));
+        phase = "routing";
         const route = await ai.classify(messages, inputCheck.categories, safety);
         safety = retainRisk(
           safety,
@@ -71,18 +73,23 @@ export async function runChat(
         else {
           const noQuestions = route.noQuestions || wantsNoQuestions(args.message) || args.summary;
           await slot.extra();
+          phase = "generation";
           const reply = await ai.generate(messages, args.summary, stage, noQuestions);
           safety = retainRisk(safety, reply.safety);
           if (safety !== "normal") body = safetyText[safety];
           else if (!validateReply(reply, noQuestions)) {
+            console.warn("ai_check_rejected", { phase: "reply_format" });
             body = fallback;
             notice = true;
           } else {
             const candidate = [reply.body, reply.question].filter(Boolean).join(" ");
+            phase = "output_moderation";
             const outputCheck = await ai.moderate(candidate);
             await slot.extra();
+            phase = "output_review";
             const audit = await ai.audit(messages, candidate);
             if (outputCheck.flagged || !audit.safe) {
+              console.warn("ai_check_rejected", { phase: "output_review" });
               body = fallback;
               notice = true;
             } else {
@@ -92,6 +99,11 @@ export async function runChat(
           }
         }
       } catch (error) {
+        // Operational diagnostics only. Never log prompts, replies, request objects or SDK errors.
+        console.warn("ai_request_failed", {
+          phase,
+          code: error instanceof AppError ? error.code : "PROVIDER_RESPONSE",
+        });
         if (
           error instanceof AppError &&
           ["AI_TIMEOUT", "AI_CONNECTION", "CANCELLED"].includes(error.code)
