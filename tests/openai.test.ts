@@ -111,10 +111,15 @@ test("summary generation and review use user statements without treating previou
   assert.equal(JSON.stringify(calls.map((c) => c.input)).includes("가족"), false);
   const hallucinated: typeof fetch = async () =>
     json(envelope({ situation: null, feeling: "속상해요.", thought: null, need: "가족의 도움" }));
-  await assert.rejects(
-    new AI("gpt-5-nano", 1000, { fetch: hallucinated }).generate(input, true, "diary", true),
-    (error: unknown) => error instanceof AppError && error.code === "SUMMARY_GROUNDING",
+  const partial = await new AI("gpt-5-nano", 1000, { fetch: hallucinated }).generate(
+    input,
+    true,
+    "diary",
+    true,
   );
+  assert.doesNotMatch(partial.body, /가족/);
+  assert.match(partial.body, /필요했던 도움: ___/);
+  assert.match(partial.body, /속상해요/);
 });
 test("real OpenAI SDK runs input moderation, routing, generation, output moderation and audit in order", async () => {
   const f = fixture(),

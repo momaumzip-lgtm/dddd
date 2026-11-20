@@ -642,7 +642,10 @@ export default function Chat({ config }: { config: PublicConfig }) {
         {panel === "diary" && (
           <>
             <h2 id="panel-title">오늘 알아차린 마음</h2>
-            <p>맞는 말보다, 나에게 솔직한 한 줄이면 충분해요. 빈칸은 떠오를 때 채워도 괜찮아요.</p>
+            <p>
+              맞는 말보다, 나에게 솔직한 한 줄이면 충분해요. 정리에서 확인하지 못한 내용은 빈칸으로
+              남겨요. 떠오를 때 직접 채워도 괜찮아요.
+            </p>
             <label htmlFor="diary" className="sr-only">
               오늘의 깨달음 일기
             </label>
