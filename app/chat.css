@@ -377,11 +377,7 @@ h3 {
   margin: 6px 0 27px 43px;
   animation: arrive 0.5s ease-out;
 }
-.welcome-copy .eyebrow {
-  font-size: 0.625rem;
-  color: #6b8463;
-  letter-spacing: 0.025em;
-}
+
 .welcome-copy h2 {
   font-family: var(--serif);
   font-size: 1.75rem;
@@ -395,9 +391,7 @@ h3 {
   color: #65755e;
   margin: 0;
 }
-.mobile-break {
-  display: none;
-}
+
 .message {
   display: flex;
   align-items: flex-start;
@@ -1301,10 +1295,7 @@ dialog .fine-print {
     margin: 0 0 25px 0;
     padding-left: 2px;
   }
-  .welcome-copy .eyebrow {
-    font-size: 0.5625rem;
-    letter-spacing: 0.025em;
-  }
+
   .welcome-copy h2 {
     font-size: 1.5rem;
     line-height: 1.5;

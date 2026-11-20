@@ -31,8 +31,8 @@ function settings() {
 export function surveyConfig(): SurveyConfig {
   return {
     ready: settings().success,
-    recipient: process.env.OPERATOR_NAME || "서비스 운영자 (미확정)",
-    retention: process.env.SURVEY_RETENTION_NOTICE || "개발용 미확정 · 공개 전 안내 예정",
+    recipient: process.env.OPERATOR_NAME || "운영 정보 확인 중",
+    retention: process.env.SURVEY_RETENTION_NOTICE || "설문 보관·삭제 기준을 확인 중입니다.",
   };
 }
 export async function surveyIdentity(cookie: string | undefined, token: string, cid: string) {

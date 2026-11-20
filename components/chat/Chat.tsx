@@ -559,7 +559,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                   경찰 긴급신고<small>폭력 등 경찰의 긴급 도움이 필요할 때</small>
                 </span>
               </a>
-              <a href="tel:+82109?oai_link_source=model_response_hotline">
+              <a href="tel:109">
                 <strong>109</strong>
                 <span>
                   자살예방상담<small>자살 관련 위기 상담이 필요할 때</small>
@@ -615,9 +615,9 @@ export default function Chat({ config }: { config: PublicConfig }) {
             </p>
             <h3>운영 및 문의</h3>
             <p>
-              운영주체: {config.operator || "개발용 미확정"}
+              운영주체: {config.operator || "운영 정보 확인 중"}
               <br />
-              문의·삭제 요청: {config.contact || "개발용 미확정"}
+              문의·삭제 요청: {config.contact || "문의처 확인 중"}
               <br />
               이용 대상: {config.policy.targetAge || "공개 운영 전 확정 필요"}
             </p>

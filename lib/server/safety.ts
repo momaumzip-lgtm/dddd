@@ -1,4 +1,3 @@
-import type { Message } from "../config";
 import type { Reply, Safety } from "./schemas";
 export const safetyText = {
   emergency:
@@ -71,7 +70,4 @@ export function validateReply(reply: Reply, noQuestions: boolean) {
   )
     return false;
   return true;
-}
-export function context(history: Message[], message: string) {
-  return [...history, { role: "user" as const, content: message }];
 }

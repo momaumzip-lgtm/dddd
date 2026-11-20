@@ -210,7 +210,7 @@ export default function Survey({
                 <br />
                 보관·삭제 기준: {config.retention}
                 <br />
-                문의·삭제 요청: {contact || "개발용 미확정"}
+                문의·삭제 요청: {contact || "문의처 확인 중"}
               </p>
               <p>
                 채팅 원문·대화 요약·일기는 자동 첨부하지 않아요. 앱 DB에는 설문 내용을 저장하지
