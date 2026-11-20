@@ -73,6 +73,43 @@ function fixture() {
   };
   return { calls, transport };
 }
+
+test("summary generation and review use user statements without treating previous AI guesses as facts", async () => {
+  const calls: Record<string, any>[] = [];
+  const transport: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    calls.push(body);
+    return json(
+      envelope(
+        body.text.format.name === "coach_reply"
+          ? {
+              ...reply,
+              body: "나는 발표가 마음처럼 되지 않아 속상했다.",
+              question: null,
+              stage: "diary",
+            }
+          : { safe: true, reason: "none" },
+      ),
+    );
+  };
+  const ai = new AI("gpt-5-nano", 1000, { fetch: transport });
+  const input = [
+    { role: "user" as const, content: "발표가 마음처럼 되지 않아 속상해요." },
+    { role: "assistant" as const, content: "휴식이 필요하셨군요. 가족의 도움이 있었나요?" },
+    { role: "user" as const, content: "제가 말한 내용만 정리해 주세요." },
+  ];
+  const summary = await ai.generate(input, true, "diary", true);
+  await ai.audit(input, summary.body, true);
+  assert.deepEqual(
+    calls[0].input,
+    input.filter((m) => m.role === "user"),
+  );
+  assert.deepEqual(calls[1].input, [
+    ...calls[0].input,
+    { role: "assistant", content: summary.body },
+  ]);
+  assert.equal(JSON.stringify(calls.map((c) => c.input)).includes("가족"), false);
+});
 test("real OpenAI SDK runs input moderation, routing, generation, output moderation and audit in order", async () => {
   const f = fixture(),
     a = args(),
@@ -111,7 +148,7 @@ test("real OpenAI SDK runs input moderation, routing, generation, output moderat
     ...result.history,
     { role: "user", content: next.message },
   ]);
-  assert.match(generation.body.instructions, /마지막 확인 단계: thought/);
+  assert.match(generation.body.instructions, /현재 단계: thought/);
   assert.match(generation.body.instructions, /질문 금지: true/);
   assert.equal(continued.history.length, 4);
   assert.equal(continued.revision, 2);

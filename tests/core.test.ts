@@ -159,7 +159,7 @@ test("unsafe, invalid, empty or unreviewed output is never released", async () =
     assert.doesNotMatch(r.body, /발표가 마음처럼/);
   }
 });
-test("question refusal rejects question-containing reply; no paid regeneration loop", async () => {
+test("question refusal rejects invalid reply after at most one counted format repair", async () => {
   const p = provider();
   const r = await runChat(
     { ...args(), message: "질문하지 말고 그냥 들어줘" },
@@ -167,7 +167,31 @@ test("question refusal rejects question-containing reply; no paid regeneration l
     p.ai,
   );
   assert.equal(r.notice, true);
-  assert.equal(p.count(), 1);
+  assert.equal(p.count(), 2);
+});
+
+test("one format repair can recover a valid reply and consumes the shared generation cap", async () => {
+  let generated = 0;
+  const p = provider({
+    generate: async (_messages, _summary, _stage, _noQuestions, repairIssue) => {
+      generated++;
+      if (!repairIssue) return { body: "", question: null, stage: "emotion", safety: "normal" };
+      assert.equal(repairIssue, "empty_body");
+      return {
+        body: "출근을 준비하며 마음이 조급해지셨군요.",
+        question: null,
+        stage: "listen",
+        safety: "normal",
+      };
+    },
+  });
+  const db = new LuaStore(),
+    gate = new Gate(db, cap),
+    a = { ...args(), message: "질문 말고 들어주세요" };
+  const result = await runChat(a, gate, p.ai);
+  assert.equal(result.notice, false);
+  assert.equal(generated, 2);
+  assert.equal(db.get(gate.keys(a.sid, a.cid, a.rid)[4]), "4");
 });
 test("harmful instructions receive fixed refusal; no generation", async () => {
   const p = provider({

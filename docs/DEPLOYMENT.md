@@ -52,6 +52,6 @@ DB는 기존 Netlify 무료 플랜 크레딧을 사용합니다. 현재 공식 �
 
 현재 설정은 최저가 요청에 따라 `gpt-5-nano`입니다. 2026-11-20 확인 기준 100만 토큰당 입력 $0.05, 출력 $0.40입니다. **2026-12-11 종료 예정**이므로 그 전에 운영자가 대체 모델을 결정하고 검수해야 합니다. 상위 모델로 자동 전환하지 않습니다. Standard 처리, `reasoning.effort: minimal`, SDK 자동 재시도 0회로 설정했습니다.
 
-일반 정상 대화는 분류·생성·검수의 유료 호출 3회와 무료 moderation 2회를 거칩니다. 비용은 이력·시스템 지시·검수·reasoning 토큰을 포함한 합계입니다. 설정 가능한 한도는 `.env.example`에 있으며, 실제 사용량 집계에는 대화 원문을 기록하지 않습니다.
+일반 정상 대화는 분류·생성·검수의 유료 호출 3회와 무료 moderation 2회를 거칩니다. 완성된 응답이 형식 검사에서 탈락했을 때만 같은 모델로 최대 1회 수정하며, 이 추가 생성도 공유 한도에 포함합니다. 수정 뒤에도 검수에 실패하면 대체 안내를 보냅니다. 안전 검사 실패·통신 장애는 자동 재생성하지 않습니다. 비용은 이력·시스템 지시·검수·reasoning 토큰을 포함한 합계입니다. 설정 가능한 한도는 `.env.example`에 있으며, 실제 사용량 집계에는 대화 원문을 기록하지 않습니다.
 
 공식 참고: [Netlify Next.js](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/), [함수 실행 제한](https://docs.netlify.com/build/functions/configuration/), [모델 정보](https://developers.openai.com/api/docs/models/gpt-5-nano), [모델 종료 일정](https://developers.openai.com/api/docs/deprecations).

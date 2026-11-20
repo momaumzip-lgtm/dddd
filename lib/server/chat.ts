@@ -30,6 +30,7 @@ export interface Provider {
     summary: boolean,
     stage: string,
     noQuestions: boolean,
+    repairIssue?: string,
   ): Promise<Reply>;
   audit(
     messages: Message[],
@@ -79,7 +80,13 @@ export async function runChat(
           const noQuestions = route.noQuestions || wantsNoQuestions(args.message) || args.summary;
           await slot.extra();
           phase = "generation";
-          const reply = await ai.generate(messages, args.summary, stage, noQuestions);
+          let reply = await ai.generate(messages, args.summary, stage, noQuestions);
+          if (reply.safety === "normal" && !validateReply(reply, noQuestions)) {
+            const issue = replyFormatIssue(reply, noQuestions)!;
+            await slot.extra();
+            phase = "format_repair";
+            reply = await ai.generate(messages, args.summary, stage, noQuestions, issue);
+          }
           safety = retainRisk(safety, reply.safety);
           if (safety !== "normal") body = safetyText[safety];
           else if (!validateReply(reply, noQuestions)) {
