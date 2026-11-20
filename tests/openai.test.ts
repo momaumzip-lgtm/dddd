@@ -67,7 +67,7 @@ function fixture() {
           ? route
           : name === "coach_reply"
             ? { ...reply, ...(listening ? { question: null, stage: "listen" } : {}) }
-            : { safe: true, reason: "none" },
+            : { verdict: "allow" },
       ),
     );
   };
@@ -88,7 +88,7 @@ test("summary generation and review use user statements without treating previou
               question: null,
               stage: "diary",
             }
-          : { safe: true, reason: "none" },
+          : { verdict: "allow" },
       ),
     );
   };
@@ -197,8 +197,8 @@ test("SDK rejection, truncated output, malformed JSON and invalid typed fields n
     assert.doesNotMatch(result.body, /발표가 마음처럼/);
   }
 });
-test("malformed moderation and nonboolean audit results fail closed through the real SDK", async () => {
-  for (const mode of ["moderation", "audit"]) {
+test("malformed moderation and rejected, unknown or contradictory audit verdicts fail closed", async () => {
+  for (const mode of ["moderation", "audit", "rejected", "unknown", "contradictory"]) {
     const f = fixture();
     const transport: typeof fetch = async (input, init) => {
       const body = JSON.parse(String(init?.body));
@@ -206,6 +206,12 @@ test("malformed moderation and nonboolean audit results fail closed through the 
         return json({ results: [{ categories: {} }] });
       if (mode === "audit" && body.text?.format.name === "output_review")
         return json(envelope({ safe: "true" }));
+      if (mode === "rejected" && body.text?.format.name === "output_review")
+        return json(envelope({ verdict: "harm_instructions" }));
+      if (mode === "unknown" && body.text?.format.name === "output_review")
+        return json(envelope({ verdict: "unknown" }));
+      if (mode === "contradictory" && body.text?.format.name === "output_review")
+        return json(envelope({ verdict: "allow", safe: false }));
       return f.transport(input, init);
     };
     const result = await runChat(
