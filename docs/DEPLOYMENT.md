@@ -11,11 +11,13 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 
 ## 필수 설정
 
+최종 도메인은 `momaumzip.com`입니다. `www.momaumzip.com`은 기본 도메인으로 이동하도록 연결합니다. `netlify.toml`의 보안 검사 예외 목록은 화면·소스에 공개되는 운영 설정만 포함합니다. API 키, 세션 서명 키, Redis·이메일 인증 토큰은 예외에 포함하지 않습니다.
+
 | 변수                        | 값 또는 입력 기준                                                                          |
 | --------------------------- | ------------------------------------------------------------------------------------------ |
 | `APP_NAME`                  | 마음 한걸음                                                                                |
-| `APP_URL`                   | 최종 HTTPS 사이트 주소, 마지막 `/` 제외                                                    |
-| `ALLOWED_ORIGIN`            | `APP_URL`과 같은 주소                                                                      |
+| `APP_URL`                   | `https://momaumzip.com`                                                                    |
+| `ALLOWED_ORIGIN`            | `https://momaumzip.com`                                                                    |
 | `SESSION_SECRET`            | 독립적으로 생성한 32자 이상의 난수. 서버 비밀 값                                           |
 | `OPENAI_API_KEY`            | 운영자가 직접 등록하는 기존 OpenAI API 키. 서버 비밀 값                                    |
 | `OPENAI_MODEL`              | `gpt-5-nano`                                                                               |
