@@ -120,6 +120,7 @@ test("three turns carry full ordered context and current emotion; signed complet
   for (let i = 0; i < 3; i++) {
     const chunks: string[] = [];
     const r = await runStreamingChat(a, gate, p.ai, (s) => chunks.push(s));
+    await gate.acknowledge(a.sid, a.cid, a.rid, r.revision);
     assert.equal(r.progress.completed, i === 2);
     assert.equal(r.progress.turns, i + 1);
     assert.equal(chunks.join(""), r.body);
@@ -391,4 +392,101 @@ test("third-turn question is blocked and the old history and signed progress rem
   );
   assert.equal(emitted, "");
   assert.equal(a.progress.turns, 2);
+});
+test("SDK treats failed, incomplete, refusal and missing terminal streams as failures", async () => {
+  const context = {
+    emotion: selectionContext(emotion),
+    forceComplete: true,
+    listening: false,
+    remainingQuestions: 0,
+    turn: 3,
+    previousSafety: "normal" as const,
+  };
+  for (const terminal of [
+    null,
+    { type: "response.failed", response: { status: "failed" } },
+    { type: "response.incomplete", response: { status: "incomplete" } },
+    { type: "error", code: "server_error", message: "offline failure" },
+    { type: "response.refusal.delta", delta: "refused" },
+  ]) {
+    const payload = JSON.stringify({
+      mode: "complete",
+      safety: "normal",
+      sentences: ["시험용 문장이에요."],
+    });
+    const events = [
+      { type: "response.output_text.delta", delta: payload },
+      ...(terminal ? [terminal] : []),
+    ];
+    const ai = new AI("gpt-6-luna", 1000, {
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.reasoning.effort, "none");
+        assert.equal(body.stream, true);
+        return new Response(
+          events.map((e) => "data: " + JSON.stringify(e) + "\n\n").join("") + "data: [DONE]\n\n",
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
+    await assert.rejects(
+      ai.streamReply([{ role: "user", content: "정리해줘." }], context, async () => {}),
+    );
+  }
+});
+test("latest request for practical help overrides an earlier listening preference", () => {
+  const plan = responsePlan(
+    { turns: 1, questions: 0, completed: false },
+    "continue",
+    "이제 수정 순서를 알려줘.",
+    [{ role: "user", content: "그냥 들어줘." }],
+  );
+  assert.equal(plan.listening, false);
+  assert.equal(plan.forceComplete, false);
+  assert.equal(
+    responsePlan(freshProgress, "chat", "그만큼 좋은 날이었어요.", []).forceComplete,
+    false,
+  );
+});
+test("intensity guidance changes with category and never converts unknown to a numerical score", () => {
+  const low = selectionContext({ ...emotion, intensityBand: "0_20" }),
+    high = selectionContext({ ...emotion, intensityBand: "80_100" }),
+    joy = selectionContext({
+      ...emotion,
+      emotionId: emotionCatalog.find((e) => e.label === "기쁨")!.id,
+      intensityBand: "80_100",
+    });
+  assert.notEqual(low.responseGuidance, high.responseGuidance);
+  assert.notEqual(high.responseGuidance, joy.responseGuidance);
+  assert.equal(selectionContext(unknownEmotion).intensityBand, "unknown");
+});
+test("lost final packet and lost acknowledgement recover using metadata without a second counted turn", async () => {
+  const db = new LuaStore(),
+    gate = new Gate(db, cap),
+    a = args(),
+    p = provider();
+  const lost = await runStreamingChat(a, gate, p.ai, () => {});
+  // The final packet never reached the browser: its old revision can explicitly retry.
+  const retryArgs = { ...a, rid: id() };
+  const retry = await runStreamingChat(retryArgs, gate, p.ai, () => {});
+  assert.equal(retry.progress.turns, 1);
+  assert.equal(retry.history.length, 2);
+  await gate.acknowledge(a.sid, a.cid, retryArgs.rid, retry.revision);
+  await gate.acknowledge(a.sid, a.cid, retryArgs.rid, retry.revision); // acknowledgement response lost: idempotent
+  await assert.rejects(gate.acknowledge(a.sid, a.cid, a.rid, lost.revision), /상태가 달라/);
+  const next = await runStreamingChat(
+    {
+      ...a,
+      rid: id(),
+      revision: retry.revision,
+      history: retry.history,
+      progress: retry.progress,
+      message: "표 순서만 바꾸래요.",
+    },
+    gate,
+    p.ai,
+    () => {},
+  );
+  assert.equal(next.progress.turns, 2);
+  assert.ok([...db.data.values()].every((v) => !v.value.includes("수정 요청")));
 });

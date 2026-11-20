@@ -1,8 +1,8 @@
 import "server-only";
 import { databaseConfigured } from "./database";
-// Lowest listed text generation price checked 2026-11-20. Shutdown: 2026-12-11.
-// No automatic migration or more expensive model fallback; review before that date.
-export const DEFAULT_CHAT_MODEL = "gpt-5-nano";
+// Selected after live Korean completion/latency checks on 2026-11-21.
+// One ordinary generation per turn; no automatic higher-priced fallback.
+export const DEFAULT_CHAT_MODEL = "gpt-6-luna";
 export const chatModel = () => process.env.OPENAI_MODEL?.trim() || DEFAULT_CHAT_MODEL;
 export function limits() {
   const num = (key: string, value: number, max: number) => {

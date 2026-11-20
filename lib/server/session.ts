@@ -61,7 +61,19 @@ export const state = (
   stage: string,
   revision: number,
   progress: Progress = freshProgress,
-) => sign({ kind: "state", sid, cid, hash: hash(history), safety, stage, revision, progress });
+  ackRid?: string,
+) =>
+  sign({
+    kind: "state",
+    sid,
+    cid,
+    hash: hash(history),
+    safety,
+    stage,
+    revision,
+    progress,
+    ...(ackRid ? { ackRid } : {}),
+  });
 export async function validateState(
   cookie: string | undefined,
   token: string,
@@ -86,5 +98,6 @@ export async function validateState(
     stage: String(p.stage),
     revision: p.revision as number,
     progress: progressSchema.parse(p.progress || freshProgress),
+    ackRid: typeof p.ackRid === "string" ? p.ackRid : undefined,
   };
 }

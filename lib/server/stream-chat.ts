@@ -216,7 +216,7 @@ export async function runStreamingChat(
           };
     progress.messageIds = [...(args.progress.messageIds || []), messageId];
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");
-    await slot.finish(args.revision + 1);
+    await slot.stage(args.revision + 1);
     committed = true;
     return {
       body,

@@ -18,6 +18,7 @@ export const completedChatSchema = z.object({
   conversationLimit: z.boolean().optional(),
   timing: z.record(z.string(), z.unknown()).optional(),
 });
+export type CompletedChat = z.infer<typeof completedChatSchema>;
 export async function readChatStream(
   response: Response,
   requestId: string,

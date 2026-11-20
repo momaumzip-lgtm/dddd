@@ -20,7 +20,7 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 | `ALLOWED_ORIGIN`            | `https://momaumzip.com`                                                |
 | `SESSION_SECRET`            | 독립적으로 생성한 32자 이상의 난수. 서버 비밀 값                       |
 | `OPENAI_API_KEY`            | 운영자가 직접 등록하는 기존 OpenAI API 키. 서버 비밀 값                |
-| `OPENAI_MODEL`              | `gpt-5-nano`                                                           |
+| `OPENAI_MODEL`              | `gpt-6-luna`                                                           |
 | `OPERATOR_NAME`             | maumzip                                                                |
 | `SUPPORT_CONTACT`           | 010-6675-9496                                                          |
 | `TARGET_AGE_NOTICE`         | 20~40대 중심                                                           |
@@ -58,8 +58,8 @@ Forms는 공개 접수 기능이므로 직접 POST에는 앱 API의 서명·한�
 
 ## 비용 및 한도
 
-현재 설정은 최저가 요청에 따라 `gpt-5-nano`입니다. 2026-11-20 확인 기준 100만 토큰당 입력 $0.05, 출력 $0.40입니다. **2026-12-11 종료 예정**이므로 그 전에 운영자가 대체 모델을 결정하고 검수해야 합니다. 상위 모델로 자동 전환하지 않습니다. Standard 처리, `reasoning.effort: minimal`, SDK 자동 재시도 0회로 설정했습니다.
+현재 운영 모델은 `gpt-6-luna`, Standard 처리, `reasoning.effort: none`, SDK 자동 재시도 0회입니다. 2026-11-21 확인 모델 문서 기준 100만 토큰당 입력 $0.10, 출력 $0.50입니다. gpt-5-nano minimal·low와 gpt-5.4-nano를 합성 사례로 비교했으며, 저렴해도 정리 모드에서 질문하거나 정정을 놓친 구성은 채택하지 않았습니다. 실제 계정에서 검수한 후보 중 품질 기준을 통과한 저비용 구성을 선택했습니다. 더 비싼 모델로 자동 전환하지 않습니다.
 
-일반 정상 대화는 분류·생성·검수의 유료 호출 3회와 무료 moderation 2회를 거칩니다. 완성된 응답이 형식 검사에서 탈락했을 때만 같은 모델로 최대 1회 수정하며, 이 추가 생성도 공유 한도에 포함합니다. 수정 뒤에도 검수에 실패하면 대체 안내를 보냅니다. 안전 검사 실패·통신 장애는 자동 재생성하지 않습니다. 비용은 이력·시스템 지시·검수·reasoning 토큰을 포함한 합계입니다. 설정 가능한 한도는 `.env.example`에 있으며, 실제 사용량 집계에는 대화 원문을 기록하지 않습니다.
+현재 UI의 스트리밍 일반 대화는 입력 moderation, 유료 생성 1회, 문장별 누적 출력 moderation을 거칩니다. 입력이 flagged이거나 안전 확인 상태이면 별도 맥락 분류가 추가될 수 있습니다. 과거 배포에서 열린 클라이언트의 JSON 호환 경로는 이전 분류·생성·검수 경로를 유지합니다. 실제 비용은 토큰 합계에 따라 달라지므로 호출 수 감소를 고정된 비용 절감률로 해석하지 않습니다. 응답 길이는 목표로 유도하며, 길이 때문에 재생성하지 않습니다. 12초 호출·45초 전체 예산과 기존 공유 한도를 유지합니다. 자세한 흐름은 `docs/CONVERSATION.md`에 있습니다.
 
-공식 참고: [Netlify Next.js](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/), [함수 실행 제한](https://docs.netlify.com/build/functions/configuration/), [모델 정보](https://developers.openai.com/api/docs/models/gpt-5-nano), [모델 종료 일정](https://developers.openai.com/api/docs/deprecations).
+공식 참고: [Netlify Next.js](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/), [함수 실행 제한](https://docs.netlify.com/build/functions/configuration/), [모델 정보](https://developers.openai.com/api/docs/models/gpt-6-luna), [모델 종료 일정](https://developers.openai.com/api/docs/deprecations).

@@ -26,6 +26,18 @@ export class Gate {
       `${root}head:${sid}:${cid}`,
     ];
   }
+  receiptKeys(sid: string, cid: string, rid: string) {
+    return [
+      `{maeum}:reply:${sid}:${cid}:${rid}`,
+      `{maeum}:head:${sid}:${cid}`,
+      `{maeum}:receipt:${sid}:${cid}`,
+    ];
+  }
+  async acknowledge(sid: string, cid: string, rid: string, revision: number) {
+    this.check(
+      await this.store.eval("ack_reply", this.receiptKeys(sid, cid, rid), [rid, String(revision)]),
+    );
+  }
   async enter(sid: string, cid: string, rid: string, revision: number) {
     const keys = this.keys(sid, cid, rid);
     this.check(
@@ -38,6 +50,14 @@ export class Gate {
       ]),
     );
     return {
+      stage: async (next: number) =>
+        this.check(
+          await this.store.eval(
+            "stage_reply",
+            [keys[1], keys[5], this.receiptKeys(sid, cid, rid)[0]],
+            [rid, String(next)],
+          ),
+        ),
       extra: async () =>
         this.check(
           await this.store.eval(EXTRA, [keys[1], keys[4]], [rid, String(this.cap.global)]),

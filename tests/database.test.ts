@@ -23,6 +23,12 @@ async function fixture() {
       "utf8",
     ),
   );
+  await db.exec(
+    await readFile(
+      new URL("../netlify/database/migrations/202611210001_reply_receipt.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const store: Store = {
     async eval(op, keys, args) {
       const { rows } = await db.query<{ code: number }>(
@@ -124,6 +130,27 @@ test("SQL rejects unknown operations, rolls back partial writes and expires meta
       (await db.query("SELECT * FROM maumzip_gate_values WHERE value LIKE '%합성%'")).rows.length,
       0,
     );
+  } finally {
+    await db.close();
+  }
+});
+test("SQL receipt staging, idempotent acknowledgement and stale receipt race preserve the chosen revision", async () => {
+  const { db, store } = await fixture();
+  try {
+    const gate = new Gate(store, cap);
+    const first = await gate.enter("receipt-s", "receipt-c", "r1", 0);
+    await first.stage(1);
+    const retry = await gate.enter("receipt-s", "receipt-c", "r2", 0);
+    await retry.stage(1);
+    await gate.acknowledge("receipt-s", "receipt-c", "r2", 1);
+    await gate.acknowledge("receipt-s", "receipt-c", "r2", 1);
+    await assert.rejects(gate.acknowledge("receipt-s", "receipt-c", "r1", 1), /상태가 달라/);
+    const next = await gate.enter("receipt-s", "receipt-c", "r3", 1);
+    await next.stage(2);
+    await gate.acknowledge("receipt-s", "receipt-c", "r3", 2);
+    const unknown = await gate.enter("other", "other", "r4", 0);
+    await assert.rejects(gate.acknowledge("other", "other", "r4", 1));
+    await unknown.finish();
   } finally {
     await db.close();
   }

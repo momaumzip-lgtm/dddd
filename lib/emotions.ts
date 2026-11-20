@@ -181,6 +181,17 @@ export function selectionContext(value: EmotionSelection) {
     emotion: emotionLabel(value),
     category: entry?.category || "unknown",
     intensityBand: value.intensityBand,
+    responseGuidance: {
+      "0_20": "가볍고 자연스럽게. 작은 마음을 큰 고통으로 확대하지 않고 빠르게 정리한다.",
+      "20_40": "구체적인 상황에 짧게 공감하고 꼭 필요한 질문 하나만 한다.",
+      "40_60": "이미 아는 사실을 다시 묻지 않고 사건과 생각을 구분할 쉬운 질문 하나만 한다.",
+      "60_80": "평소보다 더 짧고 쉽게. 한 가지에만 집중하고 복잡한 자기분석을 요구하지 않는다.",
+      "80_100":
+        entry?.category === "positive"
+          ? "실제 좋은 일에 맞춰 기쁨을 함께한다. 불안 진정이나 위기 안내를 붙이지 않는다."
+          : "차분한 짧은 반영으로 부담을 낮춘다. 설명을 재촉하거나 생각의 옳고 그름을 따지지 않는다. 이 값만으로 위기로 판정하지 않는다.",
+      unknown: "강도를 추측하거나 숫자로 만들지 않고 말한 경험부터 다룬다.",
+    }[value.intensityBand],
   };
 }
 const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, "").toLowerCase();

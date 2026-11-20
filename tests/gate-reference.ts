@@ -18,6 +18,17 @@ redis.call('INCR',KEYS[2]); redis.call('EXPIRE',KEYS[2],90000); return 0`,
 if redis.call('GET',KEYS[1])~=ARGV[1] then return 3 end
 if ARGV[2]~='' then redis.call('SET',KEYS[2],ARGV[2],'EX',86400) end
 redis.call('DEL',KEYS[1]);return 0`,
+  stage_reply: `
+if redis.call('GET',KEYS[1])~=ARGV[1] then return 3 end
+if tonumber(redis.call('GET',KEYS[2]) or '0')~=tonumber(ARGV[2])-1 then return 4 end
+redis.call('SET',KEYS[3],ARGV[2],'EX',7200)
+redis.call('DEL',KEYS[1]);return 0`,
+  ack_reply: `
+if tonumber(redis.call('GET',KEYS[2]) or '0')==tonumber(ARGV[2]) and redis.call('GET',KEYS[3])==ARGV[1] then return 0 end
+if redis.call('GET',KEYS[1])~=ARGV[2] or tonumber(redis.call('GET',KEYS[2]) or '0')~=tonumber(ARGV[2])-1 then return 4 end
+redis.call('SET',KEYS[2],ARGV[2],'EX',86400)
+redis.call('SET',KEYS[3],ARGV[1],'EX',7200)
+redis.call('DEL',KEYS[1]);return 0`,
   survey_admit: `
 local claim=redis.call('GET',KEYS[1])
 if redis.call('EXISTS',KEYS[3])==1 then if claim==ARGV[1] then return 2 else return 3 end end

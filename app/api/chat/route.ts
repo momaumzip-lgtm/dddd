@@ -41,6 +41,13 @@ export async function POST(req: NextRequest) {
       p.conversationId,
       p.history,
     );
+    if (s.ackRid)
+      await new Gate(new DatabaseStore(), c).acknowledge(
+        s.sid,
+        p.conversationId,
+        s.ackRid,
+        s.revision,
+      );
     if (!configured())
       throw new AppError(
         503,
@@ -85,6 +92,7 @@ export async function POST(req: NextRequest) {
               result.progress.completed ? "end" : "emotion",
               result.revision,
               result.progress,
+              p.requestId,
             );
             emit({
               type: "done",

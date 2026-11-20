@@ -16,6 +16,8 @@ const operations = new Map([
   [ADMIT, "admit"],
   [EXTRA, "extra"],
   [FINISH, "finish"],
+  ["stage_reply", "stage_reply"],
+  ["ack_reply", "ack_reply"],
   [SURVEY_ADMIT, "survey_admit"],
   [SURVEY_FINISH, "survey_finish"],
 ]);

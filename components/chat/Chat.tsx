@@ -26,7 +26,7 @@ import {
   emotionSelectionSchema,
   type EmotionSelection,
 } from "@/lib/emotions";
-import { readChatStream } from "@/lib/browser/chat-stream";
+import { readChatStream, type CompletedChat } from "@/lib/browser/chat-stream";
 import { installPagePrivacy } from "@/lib/browser/privacy";
 const sessionResponse = z.object({ conversationId: z.string().uuid(), token: z.string() });
 const errorResponse = z.object({ error: z.string(), code: z.string().optional() });
@@ -40,6 +40,13 @@ export default function Chat({ config }: { config: PublicConfig }) {
     [complete, setComplete] = useState(false),
     [turns, setTurns] = useState(0),
     [streamText, setStreamText] = useState("");
+  const receipt = useRef<{
+    data: CompletedChat;
+    active: Session;
+    request: Pending;
+    selectedVersion?: number;
+    history: Message[];
+  } | null>(null);
   const emotionRef = useRef<EmotionSelection | null>(null),
     continueRef = useRef(false);
   const selectEmotion = (value: EmotionSelection) => {
@@ -77,6 +84,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
     controller.current?.abort();
     running.current = false;
     setHistory([]);
+    receipt.current = null;
     setStarted(false);
     setEmotion(null);
     emotionRef.current = null;
@@ -113,7 +121,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
       field.style.height = Math.min(field.scrollHeight, 144) + "px";
     }
   }, [draft]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!history.length && !pending && status === "idle") {
       thread.current?.scrollTo({ top: 0 });
       return;
@@ -133,11 +141,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
   };
   async function send(item?: Pending) {
     if (running.current || conversationLimit || sessionInvalid || (!item && complete)) return;
-    const request: Pending = item || {
-      text: draft.trim(),
-      action: continueRef.current ? "continue" : "chat",
-      messageId: crypto.randomUUID(),
-    };
+    const request: Pending = receipt.current?.request ||
+      item || {
+        text: draft.trim(),
+        action: continueRef.current ? "continue" : "chat",
+        messageId: crypto.randomUUID(),
+      };
     request.messageId ||= crypto.randomUUID();
     if (!request.text || request.text.length > config.maxInput) return;
     if (!acknowledged) {
@@ -153,12 +162,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setStatus("waiting");
     setError("");
     nearBottom.current = true;
-    const requestId = crypto.randomUUID();
+    const requestId = receipt.current?.data.requestId || crypto.randomUUID();
     performance.mark("chat-send:" + requestId);
     requestAnimationFrame(() => performance.mark("chat-ack:" + requestId));
     let firstText = false;
     try {
-      let active = session;
+      let active = receipt.current?.active || session;
       if (!active) {
         const response = await fetch("/api/session", {
           method: "POST",
@@ -173,38 +182,57 @@ export default function Chat({ config }: { config: PublicConfig }) {
         setSession(active);
       }
       const sentEmotion = emotionRef.current;
-      const selectedVersion = sentEmotion?.version;
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
-        body: JSON.stringify({
-          requestId,
-          messageId: request.messageId,
-          emotion: sentEmotion,
-          conversationId: active.conversationId,
-          token: active.token,
-          history,
-          message: request.text,
-          action: request.action,
-        }),
-        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(90000)]),
-      });
-      if (!response.ok) {
-        const failed = errorResponse.parse(await response.json());
-        if (failed.code === "CONTEXT") setConversationLimit(true);
-        throw new VisibleError(failed.error);
-      }
-      const data = await readChatStream(response, requestId, (text) => {
-        if (epoch === generation.current) {
-          setStreamText(text);
-          if (!firstText) {
-            firstText = true;
-            requestAnimationFrame(() =>
-              requestAnimationFrame(() => performance.mark("chat-first-paint:" + requestId)),
-            );
-          }
+      const selectedVersion = receipt.current?.selectedVersion ?? sentEmotion?.version;
+      const baseHistory = receipt.current?.history || history;
+      let data = receipt.current?.data;
+      if (!data) {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+          body: JSON.stringify({
+            requestId,
+            messageId: request.messageId,
+            emotion: sentEmotion,
+            conversationId: active.conversationId,
+            token: active.token,
+            history,
+            message: request.text,
+            action: request.action,
+          }),
+          signal: AbortSignal.any([abort.signal, AbortSignal.timeout(90000)]),
+        });
+        if (!response.ok) {
+          const failed = errorResponse.parse(await response.json());
+          if (failed.code === "CONTEXT") setConversationLimit(true);
+          throw new VisibleError(failed.error);
         }
+        data = await readChatStream(response, requestId, (text) => {
+          if (epoch === generation.current) {
+            setStreamText(text);
+            if (!firstText) {
+              firstText = true;
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => performance.mark("chat-first-paint:" + requestId)),
+              );
+            }
+          }
+        });
+        if (data.conversationId !== active.conversationId)
+          throw new VisibleError(
+            "대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.",
+          );
+        receipt.current = { data, active, request, selectedVersion, history: baseHistory };
+      }
+      const confirmed = await fetch("/api/chat/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: active.conversationId, token: data.token }),
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       });
+      if (!confirmed.ok)
+        throw new VisibleError(
+          "답변은 받았지만 접수 확인을 마치지 못했어요. 받은 답변 접수를 다시 확인해 주세요. AI를 새로 호출하지 않아요.",
+        );
       if (epoch !== generation.current) return;
       if (data.conversationId !== active.conversationId)
         throw new VisibleError("대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.");
@@ -214,15 +242,16 @@ export default function Chat({ config }: { config: PublicConfig }) {
       setComplete(data.completed);
       setTurns(data.turns);
       continueRef.current = false;
+      receipt.current = null;
       setHistory([
-        ...history,
+        ...baseHistory,
         { role: "user", content: request.text },
         { role: "assistant", content: data.text },
       ]);
       setSession({ ...active, token: data.token });
       setPending(null);
       setStreamText("");
-      setDraft(data.notice ? request.text : "");
+      setDraft((current) => (data.notice ? request.text : current === request.text ? "" : current));
       setStatus("idle");
       setHelp(data.help);
       setConversationLimit(data.conversationLimit === true);
@@ -442,7 +471,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                     {pending && status !== "waiting" && !sessionInvalid && !conversationLimit && (
                       <button onClick={() => void send(pending)}>
                         <RotateCcw size={16} />
-                        다시 답변 받기
+                        {receipt.current ? "받은 답변 접수 다시 확인" : "다시 답변 받기"}
                       </button>
                     )}
                   </div>
@@ -611,7 +640,10 @@ export default function Chat({ config }: { config: PublicConfig }) {
         ref={dialog}
         onCancel={() => setPanel(null)}
         onClose={() => setPanel(null)}
-        aria-labelledby={panel === "survey" ? "survey-title" : "panel-title"}
+        aria-label={panel === "emotion" ? "감정과 강도 바꾸기" : undefined}
+        aria-labelledby={
+          panel === "emotion" ? undefined : panel === "survey" ? "survey-title" : "panel-title"
+        }
       >
         <div className="dialog-header">
           <span className="eyebrow">{config.name}</span>
