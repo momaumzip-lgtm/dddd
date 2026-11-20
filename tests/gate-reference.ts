@@ -23,7 +23,7 @@ local claim=redis.call('GET',KEYS[1])
 if redis.call('EXISTS',KEYS[3])==1 then if claim==ARGV[1] then return 2 else return 3 end end
 if claim and claim~=ARGV[1] then return 4 end
 if redis.call('EXISTS',KEYS[2])==1 then return 5 end
-if tonumber(redis.call('GET',KEYS[6]) or '0')>=3 then return 6 end
+if tonumber(redis.call('GET',KEYS[6]) or '0')>=1 then return 6 end
 if not claim then
  if tonumber(redis.call('GET',KEYS[4]) or '0')>=3 or tonumber(redis.call('GET',KEYS[5]) or '0')>=tonumber(ARGV[2]) then return 1 end
  redis.call('SET',KEYS[1],ARGV[1],'EX',7200)

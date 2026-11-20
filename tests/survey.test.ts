@@ -10,9 +10,7 @@ const answers = { helpfulness: 4, ease: 5, reuse: 3, comment: "합성 의견 <im
 beforeEach(() => {
   Object.assign(process.env, {
     SESSION_SECRET: "test-only-secret-at-least-32-characters",
-    RESEND_API_KEY: "test-only-not-real-key",
-    SURVEY_FROM_EMAIL: "from@example.test",
-    SURVEY_TO_EMAIL: "owner@example.test",
+    NETLIFY_FORMS_ENABLED: "true",
     OPERATOR_NAME: "테스트 운영자",
     SUPPORT_CONTACT: "support@example.test",
     SURVEY_RETENTION_NOTICE: "테스트용 보관 기준",
@@ -21,7 +19,7 @@ beforeEach(() => {
   });
 });
 const delivered: typeof fetch = async () =>
-  new Response(JSON.stringify({ id: "test-provider-accepted" }), { status: 200 });
+  new Response("<main data-receipt=maumzip-forms-received-v1></main>", { status: 200 });
 test("survey schema requires separate consent, three valid ratings and rejects chat/recipient injection", () => {
   const base = {
     requestId: crypto.randomUUID(),
@@ -49,22 +47,37 @@ test("survey signed identity binds cookie and conversation without accepting cha
   await assert.rejects(surveyIdentity(other.cookie, s.token, s.cid));
   await assert.rejects(surveyIdentity(s.cookie, s.token, crypto.randomUUID()));
 });
-test("email payload contains only explicit survey answers and fixed server recipient", async () => {
-  let body: any, headers: Headers;
+test("Netlify payload contains only consented survey fields without chat, cookie or secrets", async () => {
   const transport: typeof fetch = async (url, init) => {
-    assert.equal(url, "https://api.resend.com/emails");
-    body = JSON.parse(String(init?.body));
-    headers = new Headers(init?.headers);
-    assert.match(headers.get("Idempotency-Key")!, /^survey\//);
+    assert.equal(String(url), "https://review.example.test/netlify-forms.html");
+    const body = new URLSearchParams(String(init?.body));
+    assert.equal(body.get("form-name"), "maumzip-experience");
+    assert.equal(body.get("자유의견"), answers.comment);
+    assert.equal(body.get("접수번호"), "r");
+    assert.ok(body.get("도움정도")!.startsWith("4 / 5"));
+    assert.deepEqual(
+      [...body.keys()].sort(),
+      [
+        "form-name",
+        "bot-field",
+        "접수번호",
+        "설문버전",
+        "선택동의",
+        "도움정도",
+        "사용편의",
+        "재이용의향",
+        "자유의견",
+      ].sort(),
+    );
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Content-Type"), "application/x-www-form-urlencoded");
+    assert.equal(headers.get("Cookie"), null);
+    assert.equal(headers.get("Authorization"), null);
     return delivered(url, init);
   };
   await sendSurvey("s", "c", "r", answers, new SurveyGate(new LuaStore()), transport);
-  assert.deepEqual(body.to, ["owner@example.test"]);
-  assert.deepEqual(Object.keys(body).sort(), ["from", "subject", "text", "to"]);
-  assert.ok(!("html" in body));
-  assert.match(body.text, /합성 의견 <img src=x>/);
-  assert.ok(!body.text.includes("token"));
 });
+
 test("parallel submissions and a completed retry cannot send multiple emails", async () => {
   const db = new LuaStore();
   let count = 0;
@@ -83,38 +96,41 @@ test("parallel submissions and a completed retry cannot send multiple emails", a
   await assert.rejects(sendSurvey("s", "c", "different", answers, gate, transport));
   assert.ok(![...db.data.values()].some((v) => v.value.includes("합성 의견")));
 });
-test("uncertain send can explicitly retry with identical provider key and payload; changed answers rejected", async () => {
+test("uncertain Netlify acceptance never resends after a timeout, even when the lock expires", async () => {
   const db = new LuaStore(),
     gate = new SurveyGate(db);
-  const attempts: { body: unknown; key: unknown }[] = [];
-  const transport: typeof fetch = async (url, init) => {
-    attempts.push({ body: init?.body, key: new Headers(init?.headers).get("Idempotency-Key") });
-    if (attempts.length === 1) throw new Error("network lost after possible provider acceptance");
-    return delivered(url, init);
+  let count = 0;
+  const transport: typeof fetch = async () => {
+    count++;
+    throw new Error("response lost");
   };
   await assert.rejects(sendSurvey("s", "c", "r", answers, gate, transport), /확인하지 못/);
-  await assert.rejects(
-    sendSurvey("s", "c", "r", { ...answers, ease: 1 }, gate, transport),
-    /이미 전송/,
-  );
-  await sendSurvey("s", "c", "r", answers, gate, transport);
-  assert.deepEqual(attempts[0], attempts[1]);
+  db.now += 31000;
+  await assert.rejects(sendSurvey("s", "c", "r", answers, gate, transport), /다시 보내지/);
+  await assert.rejects(sendSurvey("s", "c", "other", answers, gate, transport), /이미 전송/);
+  assert.equal(count, 1);
 });
-test("survey shared global/day caps and bounded retries do not use chat generation quota", async () => {
+
+test("survey shared global cap is separate from paid AI quota", async () => {
   const db = new LuaStore(),
     gate = new SurveyGate(db, 2);
   for (let i = 0; i < 2; i++) await sendSurvey("s" + i, "c", "r", answers, gate, delivered);
   await assert.rejects(sendSurvey("s3", "c", "r", answers, gate, delivered), /횟수/);
   assert.ok([...db.data.keys()].every((k) => k.includes(":survey:")));
-  const retryGate = new SurveyGate(new LuaStore());
-  for (let i = 0; i < 3; i++)
-    await assert.rejects(
-      sendSurvey("s", "c", "r", answers, retryGate, async () => {
-        throw new Error();
-      }),
-    );
-  await assert.rejects(sendSurvey("s", "c", "r", answers, retryGate, delivered), /횟수/);
 });
+
+test("generic HTML or failed Forms responses are never reported as accepted", async () => {
+  for (const response of [
+    new Response("generic page"),
+    new Response("maumzip-forms-received-v1", { status: 404 }),
+  ]) {
+    await assert.rejects(
+      sendSurvey("s", "c", "r", answers, new SurveyGate(new LuaStore()), async () => response),
+      /확인하지 못/,
+    );
+  }
+});
+
 test("storage outage fails closed and missing configuration never masquerades as submission", async () => {
   let calls = 0;
   const transport: typeof fetch = async (...a) => {
@@ -136,7 +152,7 @@ test("storage outage fails closed and missing configuration never masquerades as
     ),
   );
   assert.equal(calls, 0);
-  delete process.env.RESEND_API_KEY;
+  delete process.env.NETLIFY_FORMS_ENABLED;
   assert.equal(surveyConfig().ready, false);
   const db = new LuaStore();
   await assert.rejects(
@@ -147,7 +163,7 @@ test("storage outage fails closed and missing configuration never masquerades as
   assert.equal(calls, 0);
 });
 test("survey route enforces Origin, consent and honest setup response", async () => {
-  delete process.env.RESEND_API_KEY;
+  delete process.env.NETLIFY_FORMS_ENABLED;
   const s = await newSession();
   const body = {
     conversationId: s.cid,

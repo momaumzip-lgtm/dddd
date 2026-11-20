@@ -11,22 +11,22 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 
 ## 필수 설정
 
-최종 도메인은 `momaumzip.com`입니다. `www.momaumzip.com`은 기본 도메인으로 이동하도록 연결합니다. `netlify.toml`의 보안 검사 예외 목록은 화면·소스에 공개되는 운영 설정만 포함합니다. API 키, 세션 서명 키, DB 연결 문자열·이메일 인증 토큰은 예외에 포함하지 않습니다.
+최종 도메인은 `momaumzip.com`입니다. `www.momaumzip.com`은 기본 도메인으로 이동하도록 연결합니다. `netlify.toml`의 보안 검사 예외 목록은 화면·소스에 공개되는 운영 설정만 포함합니다. API 키, 세션 서명 키, DB 연결 문자열은 예외에 포함하지 않습니다.
 
-| 변수                        | 값 또는 입력 기준                                                                          |
-| --------------------------- | ------------------------------------------------------------------------------------------ |
-| `APP_NAME`                  | 마음 한걸음                                                                                |
-| `APP_URL`                   | `https://momaumzip.com`                                                                    |
-| `ALLOWED_ORIGIN`            | `https://momaumzip.com`                                                                    |
-| `SESSION_SECRET`            | 독립적으로 생성한 32자 이상의 난수. 서버 비밀 값                                           |
-| `OPENAI_API_KEY`            | 운영자가 직접 등록하는 기존 OpenAI API 키. 서버 비밀 값                                    |
-| `OPENAI_MODEL`              | `gpt-5-nano`                                                                               |
-| `OPERATOR_NAME`             | maumzip                                                                                    |
-| `SUPPORT_CONTACT`           | 010-6675-9496                                                                              |
-| `TARGET_AGE_NOTICE`         | 20~40대 중심                                                                               |
-| `DATA_PROCESSING_NOTICE`    | 실제 외부 처리·보관 조건을 확인한 안내                                                     |
-| `HOST_LOG_POLICY_CONFIRMED` | 호스팅·APM 본문 로그 및 보존 설정 확인 후 `true`                                           |
-| `SURVEY_RETENTION_NOTICE`   | 운영자 메일함 설문 응답은 접수일부터 1년 보관 후 삭제. 발송 서비스의 보존 조건은 별도 확인 |
+| 변수                        | 값 또는 입력 기준                                                      |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `APP_NAME`                  | 마음 한걸음                                                            |
+| `APP_URL`                   | `https://momaumzip.com`                                                |
+| `ALLOWED_ORIGIN`            | `https://momaumzip.com`                                                |
+| `SESSION_SECRET`            | 독립적으로 생성한 32자 이상의 난수. 서버 비밀 값                       |
+| `OPENAI_API_KEY`            | 운영자가 직접 등록하는 기존 OpenAI API 키. 서버 비밀 값                |
+| `OPENAI_MODEL`              | `gpt-5-nano`                                                           |
+| `OPERATOR_NAME`             | maumzip                                                                |
+| `SUPPORT_CONTACT`           | 010-6675-9496                                                          |
+| `TARGET_AGE_NOTICE`         | 20~40대 중심                                                           |
+| `DATA_PROCESSING_NOTICE`    | 실제 외부 처리·보관 조건을 확인한 안내                                 |
+| `HOST_LOG_POLICY_CONFIRMED` | 호스팅·APM 본문 로그 및 보존 설정 확인 후 `true`                       |
+| `SURVEY_RETENTION_NOTICE`   | Netlify Forms와 운영자 메일함에서 접수일부터 1년 보관 후 운영자가 삭제 |
 
 실제 계정이나 계약 조건을 확인하지 않은 정책 값은 임의로 확정하지 않습니다. 운영 준비 확인은 `npm run release:check`로 실행합니다. 이 명령은 API 키의 유효성을 검증하지 않습니다.
 
@@ -34,19 +34,27 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 
 `@netlify/database`가 설치되어 있어 Netlify가 배포 시 DB와 `NETLIFY_DB_URL`을 자동으로 준비합니다. 별도 Upstash 가입이나 Redis 토큰이 필요하지 않습니다. `netlify/database/migrations/`의 SQL이 게시 전에 적용되며, 실패하면 새 배포가 게시되지 않습니다.
 
-사용량·요청 식별자·revision만 저장합니다. 모든 판정은 기존 mutex 행 잠금을 잡은 단일 Postgres 트랜잭션에서 처리하며 AI·이메일 요청 중에는 잠금을 유지하지 않습니다. DB 장애·5초 내 확인 실패 시 과금 호출을 진행하지 않습니다. 만료값은 다음 요청에서 정리하고, DB 백업 보관 기간은 별도입니다.
+사용량·요청 식별자·revision만 저장합니다. 모든 판정은 기존 mutex 행 잠금을 잡은 단일 Postgres 트랜잭션에서 처리하며 AI·설문 접수 요청 중에는 잠금을 유지하지 않습니다. DB 장애·5초 내 확인 실패 시 과금 호출을 진행하지 않습니다. 만료값은 다음 요청에서 정리하고, DB 백업 보관 기간은 별도입니다.
 
 DB는 기존 Netlify 무료 플랜 크레딧을 사용합니다. 현재 공식 기준 compute는 시간당 단위 10크레딧, 대역폭은 GB당 20크레딧입니다. 무료 플랜은 비활성 5분 후 절전합니다. 사용량이 많으면 무료 크레딧이 먼저 소진될 수 있으므로 대시보드를 확인합니다. 이 프로젝트 설정에서 유료 플랜이나 자동 충전을 활성화하지 않았습니다. [Netlify DB 요금·제한](https://docs.netlify.com/build/data-and-storage/netlify-database/billing-and-usage/)
 
-## 선택 설문 이메일
+## 선택 설문: Netlify Forms
 
-| 변수                | 입력 기준                               |
-| ------------------- | --------------------------------------- |
-| `RESEND_API_KEY`    | Resend API 키. 서버 비밀 값             |
-| `SURVEY_FROM_EMAIL` | Resend에서 발신이 검증된 이메일         |
-| `SURVEY_TO_EMAIL`   | 설문 응답을 개별 전달받을 운영자 이메일 |
+외부 이메일 발송 서비스와 추가 API 키는 사용하지 않습니다.
 
-설문 이메일 설정이 없으면 제출을 비활성화하고 전송 준비 중임을 안내합니다. 수신 주소를 이용자 입력으로 받지 않습니다. 설문 원문은 앱 DB에 저장하지 않으며 채팅·일기·요약을 첨부하지 않습니다. 메일함 자동 삭제 기능은 없으므로 운영자가 1년 보관·삭제 기준을 관리합니다.
+1. Netlify의 **Forms → Settings → Find forms on your pages**를 켭니다.
+2. 배포 시 `public/netlify-forms.html`의 `maumzip-experience` 폼이 감지되는지 확인합니다. Next.js 서버 렌더링과 별개인 정적 HTML 스키마가 필요합니다.
+3. **Forms → Notifications**에서 Email 알림을 `momaum.zip@gmail.com`으로 설정합니다. 폼이 감지되면 대상도 `maumzip-experience`로 지정합니다. 계정 소속 이메일이면 별도 발신 도메인 인증이 필요하지 않습니다.
+4. `NETLIFY_FORMS_ENABLED=true`와 처리·보관 안내를 설정하고 재배포합니다. 알림 설정과 수신 주소는 Netlify 대시보드에서 관리하며 앱 환경변수에 이메일 키를 넣지 않습니다.
+5. 운영 화면에서 합성 설문 한 건을 제출해 Netlify 저장과 이메일 수신을 각각 확인합니다. 스팸으로 분류된 항목은 일반 알림 대상에서 빠질 수 있으므로 스팸 목록도 확인합니다.
+
+점수·자유 의견과 선택 동의·버전·무작위 접수번호만 Forms로 전달합니다. 채팅·일기·요약·세션 쿠키·서명 토큰은 첨부하지 않습니다. UI 제출은 `/api/survey`에서 서명·Origin·크기·문항·공유 한도를 확인하고 URL 인코딩하여 고정된 운영 도메인의 Forms 엔드포인트로 보냅니다.
+
+Forms는 공개 접수 기능이므로 직접 POST에는 앱 API의 서명·한도가 적용되지 않습니다. Netlify 스팸 필터와 honeypot을 함께 사용하며, 이를 인증된 설문 통계로 간주하지 않습니다. Forms에는 공급자 중복 방지 API가 없어 앱 DB가 대화당 외부 전송 시도 한 번만 허용합니다. 응답이 유실돼도 자동·수동 재전송을 하지 않습니다. 같은 요청의 재확인은 앱 DB의 접수 상태만 읽으며, 불확실한 경우 운영자가 접수번호로 Forms를 확인합니다.
+
+설문은 Netlify Forms와 운영자 메일함에 저장됩니다. 운영자가 매월 접수일이 1년 지난 항목을 두 곳에서 삭제하고, 별도 CSV를 내려받았다면 그 사본도 관리해야 합니다. 자동 삭제는 구현하지 않았습니다. 스팸 방지 기술 정보와 백업은 Netlify의 별도 처리 조건을 따릅니다.
+
+공식 문서: [폼 설정](https://docs.netlify.com/manage/forms/setup/), [이메일 알림](https://docs.netlify.com/manage/forms/notifications/), [접수·삭제 관리](https://docs.netlify.com/manage/forms/submissions/).
 
 ## 비용 및 한도
 

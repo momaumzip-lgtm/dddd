@@ -3,26 +3,18 @@ import { z } from "zod";
 import { hash, verify } from "./session";
 import { AppError } from "./errors";
 import type { Store } from "./limits";
-import {
-  SURVEY_VERSION,
-  surveyQuestions,
-  surveyScale,
-  type SurveyAnswers,
-  type SurveyConfig,
-} from "../survey";
-const emailSettings = z.object({
-  key: z.string().min(1),
-  from: z.string().email(),
-  to: z.string().email(),
+import { SURVEY_VERSION, surveyScale, type SurveyAnswers, type SurveyConfig } from "../survey";
+const formSettings = z.object({
+  enabled: z.literal("true"),
+  origin: z.url().refine((value) => new URL(value).protocol === "https:"),
   operator: z.string().trim().min(1),
   contact: z.string().trim().min(1),
   retention: z.string().trim().min(1),
 });
 function settings() {
-  return emailSettings.safeParse({
-    key: process.env.RESEND_API_KEY,
-    from: process.env.SURVEY_FROM_EMAIL,
-    to: process.env.SURVEY_TO_EMAIL,
+  return formSettings.safeParse({
+    enabled: process.env.NETLIFY_FORMS_ENABLED,
+    origin: process.env.APP_URL,
     operator: process.env.OPERATOR_NAME,
     contact: process.env.SUPPORT_CONTACT,
     retention: process.env.SURVEY_RETENTION_NOTICE,
@@ -43,6 +35,7 @@ export async function surveyIdentity(cookie: string | undefined, token: string, 
   return s.sid as string;
 }
 // Metadata only: request/fingerprint, 2h delivery status/attempts; 25h daily counters. No answers.
+// Netlify Forms has no idempotency API: reserve one outbound attempt before sending.
 export const SURVEY_ADMIT = "survey_admit";
 export const SURVEY_FINISH = "survey_finish";
 export class SurveyGate {
@@ -64,7 +57,13 @@ export class SurveyGate {
     ];
     const claim = rid + ":" + hash(answers);
     const result = await this.store.eval(SURVEY_ADMIT, keys, [claim, String(this.cap)]);
-    if (result === 1 || result === 6)
+    if (result === 6)
+      throw new AppError(
+        409,
+        "SURVEY_UNCERTAIN",
+        "이미 전송을 요청한 설문이에요. 중복 접수를 막기 위해 다시 보내지 않아요. 접수 여부는 운영자에게 문의해 주세요.",
+      );
+    if (result === 1)
       throw new AppError(
         429,
         "SURVEY_LIMIT",
@@ -100,15 +99,19 @@ export class SurveyGate {
     };
   }
 }
-export function surveyEmail(answers: SurveyAnswers) {
-  return [
-    `사용 경험 설문 (${SURVEY_VERSION})`,
-    "이용자가 별도 동의 후 제출한 설문입니다. 채팅 원문·일기·이용자 연락처는 첨부하지 않습니다.",
-    ...surveyQuestions.map(
-      (q) => `${q.label}\n${answers[q.key]} / 5 — ${surveyScale[answers[q.key] - 1]}`,
-    ),
-    `자유 의견\n${answers.comment || "(작성하지 않음)"}`,
-  ].join("\n\n");
+export function surveyForm(rid: string, answers: SurveyAnswers) {
+  const rating = (value: number) => `${value} / 5 — ${surveyScale[value - 1]}`;
+  return new URLSearchParams({
+    "form-name": "maumzip-experience",
+    "bot-field": "",
+    접수번호: rid,
+    설문버전: SURVEY_VERSION,
+    선택동의: "설문 저장 및 운영자 이메일 알림에 동의함",
+    도움정도: rating(answers.helpfulness),
+    사용편의: rating(answers.ease),
+    재이용의향: rating(answers.reuse),
+    자유의견: answers.comment || "(작성하지 않음)",
+  });
 }
 export async function sendSurvey(
   sid: string,
@@ -123,34 +126,29 @@ export async function sendSurvey(
     throw new AppError(
       503,
       "SURVEY_SETUP",
-      "설문 이메일 전달을 준비 중이에요. 아직 응답이 전송되지 않았어요.",
+      "설문 접수를 준비 중이에요. 아직 응답이 전송되지 않았어요.",
     );
   const slot = await gate.enter(sid, cid, rid, answers);
   if (slot.alreadyAccepted) return;
   let accepted = false;
   try {
     const config = configured.data;
-    const response = await transport("https://api.resend.com/emails", {
+    const response = await transport(new URL("/netlify-forms.html", config.origin), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.key}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": `survey/${sid}/${cid}`,
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: JSON.stringify({
-        from: config.from,
-        to: [config.to],
-        subject: "새 사용 경험 설문 응답",
-        text: surveyEmail(answers),
-      }),
+      body: surveyForm(rid, answers).toString(),
+      redirect: "follow",
       signal: AbortSignal.timeout(10000),
     });
-    const result = z.object({ id: z.string().min(1) }).safeParse(await response.json());
-    if (!response.ok || !result.success) throw new Error();
+    // The static success marker distinguishes a Forms response from a generic 200 page.
+    if (!response.ok || !(await response.text()).includes("maumzip-forms-received-v1"))
+      throw new Error();
     accepted = true;
     await slot.finish(true);
   } catch {
-    // Timeout may follow provider acceptance. Same payload + same provider key make an explicit retry safe.
+    // Never repeat an outbound request after a timeout: Forms may already have accepted it.
     if (!accepted) {
       try {
         await slot.finish(false);
@@ -159,7 +157,7 @@ export async function sendSurvey(
     throw new AppError(
       503,
       "SURVEY_UNCERTAIN",
-      "설문 접수를 확인하지 못했어요. 입력은 유지돼요. 같은 응답으로 다시 확인해 주세요.",
+      "설문 접수를 확인하지 못했어요. 중복 접수를 막기 위해 자동으로 다시 보내지 않아요. 접수 여부는 운영자에게 문의해 주세요.",
     );
   }
 }

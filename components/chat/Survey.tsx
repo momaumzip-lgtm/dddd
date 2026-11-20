@@ -206,17 +206,17 @@ export default function Survey({
                 <br />
                 수신: {config.recipient}의 운영 이메일
                 <br />
-                전달: 이메일 발송 서비스 Resend
+                저장·알림: Netlify Forms와 운영자 이메일
                 <br />
                 보관·삭제 기준: {config.retention}
                 <br />
                 문의·삭제 요청: {contact || "문의처 확인 중"}
               </p>
               <p>
-                채팅 원문·대화 요약·일기는 자동 첨부하지 않아요. 앱 DB에는 설문 내용을 저장하지
-                않지만 운영자 메일함과 발송 서비스에서 처리·보관돼요. 접수·중복 방지용 기술 정보의
-                유효기간은 최대 25시간이에요. 만료값은 다음 요청 때 정리하며 호스팅 백업의 보관
-                기간은 별도예요.
+                채팅 원문·대화 요약·일기는 자동 첨부하지 않아요. 설문 응답은 Netlify Forms와 운영자
+                메일함에 저장돼요. Netlify는 스팸 방지를 위한 기술 정보도 처리해요. 접수·중복 방지용
+                기술 정보의 유효기간은 최대 25시간이에요. 만료값은 다음 요청 때 정리하며 호스팅
+                백업의 보관 기간은 별도예요.
               </p>
             </details>
             <label className="survey-consent">
@@ -227,7 +227,8 @@ export default function Survey({
                 onChange={(e) => setConsent(e.target.checked)}
               />
               <span>
-                위 안내에 따라 설문 응답을 운영자의 이메일로 전달하는 데 동의합니다. (선택)
+                위 안내에 따라 설문 응답을 Netlify Forms에 저장하고 운영자 이메일로 알리는 데
+                동의합니다. (선택)
               </span>
             </label>
             {error && (
@@ -237,7 +238,8 @@ export default function Survey({
             )}
             {locked && status === "error" && (
               <p className="fine-print">
-                중복 전송을 막기 위해 전송을 요청한 응답 그대로 접수를 다시 확인해요.
+                중복 전송을 막기 위해 전송을 요청한 응답 그대로 접수 결과만 다시 확인해요. 전송이
+                불확실하면 다시 보내지 않아요.
               </p>
             )}
             <button

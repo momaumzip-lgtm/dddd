@@ -23,9 +23,10 @@ npm run build
 
 - `app/`: 화면 진입점과 API 경로
 - `components/chat/`: 대화·일기·설문 화면 및 브랜드 그래픽
-- `lib/server/`: OpenAI 호출, 안전 검수, 세션 서명, 공유 한도, 이메일 전달
+- `lib/server/`: OpenAI 호출, 안전 검수, 세션 서명, 공유 한도, Netlify Forms 접수
 - `lib/browser/`: 페이지 이탈·복원 시 입력 초기화
 - `netlify/database/migrations/`: 사용량·중복 방지용 Postgres 스키마와 트랜잭션
+- `public/netlify-forms.html`: Netlify Forms 정적 감지 스키마
 - `tests/`: 서버·안전·세션·설문·SDK 회귀 검사
 - `docs/`: 배포, 환경변수, 인수인계, 검수 안내
 

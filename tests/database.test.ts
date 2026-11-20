@@ -14,6 +14,15 @@ const cap = { minute: 6, day: 60, global: 7 };
 async function fixture() {
   const db = await PGlite.create();
   await db.exec(migration);
+  await db.exec(
+    await readFile(
+      new URL(
+        "../netlify/database/migrations/202611200002_forms_single_attempt.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   const store: Store = {
     async eval(op, keys, args) {
       const { rows } = await db.query<{ code: number }>(

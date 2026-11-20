@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex" />
+    <title>마음 한걸음 설문 접수</title>
+  </head>
+  <body>
+    <!-- Static schema for Netlify's build-time detection. The app submits through /api/survey. -->
+    <form
+      name="maumzip-experience"
+      method="POST"
+      action="/survey-received.html"
+      data-netlify="true"
+      netlify-honeypot="bot-field"
+      hidden
+    >
+      <input type="hidden" name="form-name" value="maumzip-experience" />
+      <input name="bot-field" />
+      <input name="접수번호" />
+      <input name="설문버전" />
+      <input name="선택동의" />
+      <input name="도움정도" />
+      <input name="사용편의" />
+      <input name="재이용의향" />
+      <textarea name="자유의견"></textarea>
+    </form>
+    <p>설문은 <a href="/">마음 한걸음</a>에서 참여할 수 있어요.</p>
+  </body>
+</html>
