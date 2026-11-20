@@ -81,12 +81,12 @@ test("summary generation and review use user statements without treating previou
     calls.push(body);
     return json(
       envelope(
-        body.text.format.name === "coach_reply"
+        body.text.format.name === "diary_excerpt"
           ? {
-              ...reply,
-              body: "나는 발표가 마음처럼 되지 않아 속상했다.",
-              question: null,
-              stage: "diary",
+              situation: "발표가 마음처럼 되지 않아",
+              feeling: "속상해요.",
+              thought: null,
+              need: null,
             }
           : { verdict: "allow" },
       ),
@@ -109,6 +109,12 @@ test("summary generation and review use user statements without treating previou
     { role: "assistant", content: summary.body },
   ]);
   assert.equal(JSON.stringify(calls.map((c) => c.input)).includes("가족"), false);
+  const hallucinated: typeof fetch = async () =>
+    json(envelope({ situation: null, feeling: "속상해요.", thought: null, need: "가족의 도움" }));
+  await assert.rejects(
+    new AI("gpt-5-nano", 1000, { fetch: hallucinated }).generate(input, true, "diary", true),
+    (error: unknown) => error instanceof AppError && error.code === "SUMMARY_GROUNDING",
+  );
 });
 test("real OpenAI SDK runs input moderation, routing, generation, output moderation and audit in order", async () => {
   const f = fixture(),
