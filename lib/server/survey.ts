@@ -3,12 +3,12 @@ import { z } from "zod";
 import { hash, verify } from "./session";
 import { AppError } from "./errors";
 import type { Store } from "./limits";
-import { SURVEY_VERSION, surveyScale, type SurveyAnswers, type SurveyConfig } from "../survey";
+import { SURVEY_VERSION, type SurveyAnswers, type SurveyConfig } from "../survey";
 const formSettings = z.object({
   enabled: z.literal("true"),
   origin: z.url().refine((value) => new URL(value).protocol === "https:"),
   operator: z.string().trim().min(1),
-  contact: z.string().trim().min(1),
+
   retention: z.string().trim().min(1),
 });
 function settings() {
@@ -16,7 +16,7 @@ function settings() {
     enabled: process.env.NETLIFY_FORMS_ENABLED,
     origin: process.env.APP_URL,
     operator: process.env.OPERATOR_NAME,
-    contact: process.env.SUPPORT_CONTACT,
+
     retention: process.env.SURVEY_RETENTION_NOTICE,
   });
 }
@@ -100,18 +100,18 @@ export class SurveyGate {
   }
 }
 export function surveyForm(rid: string, answers: SurveyAnswers) {
-  const rating = (value: number) => `${value} / 5 — ${surveyScale[value - 1]}`;
-  return new URLSearchParams({
+  const form = new URLSearchParams({
     "form-name": "maumzip-experience",
     "bot-field": "",
-    접수번호: rid,
-    설문버전: SURVEY_VERSION,
+    submissionId: rid,
+    surveyVersion: SURVEY_VERSION,
     선택동의: "설문 저장 및 운영자 이메일 알림에 동의함",
-    도움정도: rating(answers.helpfulness),
-    사용편의: rating(answers.ease),
-    재이용의향: rating(answers.reuse),
-    자유의견: answers.comment || "(작성하지 않음)",
+    // Forms fields are strings. The canonical answer preserves null and numeric scores on export.
+    answers: JSON.stringify(answers),
   });
+  for (const [key, value] of Object.entries(answers))
+    if (value !== null) form.set(key, String(value));
+  return form;
 }
 export async function sendSurvey(
   sid: string,

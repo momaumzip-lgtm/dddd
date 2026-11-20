@@ -1,4 +1,5 @@
 "use client";
+import { supportLink } from "@/lib/service-info";
 export default function ChatError({ retry }: { retry: () => void }) {
   return (
     <main className="app-shell">
@@ -8,7 +9,7 @@ export default function ChatError({ retry }: { retry: () => void }) {
         <button className="primary" onClick={retry}>
           화면 다시 열기
         </button>
-        <a href="tel:01066759496">운영자에게 문의하기</a>
+        <a href={supportLink}>운영자에게 문의하기</a>
       </section>
     </main>
   );

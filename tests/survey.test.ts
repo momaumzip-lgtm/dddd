@@ -1,12 +1,22 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
-import { SURVEY_VERSION, surveyRequestSchema } from "../lib/survey";
+import {
+  answersSchema,
+  updateSurvey,
+  surveyQuestions,
+  SURVEY_VERSION,
+  surveyRequestSchema,
+} from "../lib/survey";
 import { SurveyGate, sendSurvey, surveyIdentity, surveyConfig } from "../lib/server/survey";
 import { newSession } from "../lib/server/session";
 import { POST } from "../app/api/survey/route";
 import { LuaStore } from "./store";
-const answers = { helpfulness: 4, ease: 5, reuse: 3, comment: "합성 의견 <img src=x>" };
+const answers = answersSchema.parse({
+  entryRoute: "online_link",
+  organizationHelpfulness: 4,
+  improvementSuggestions: "합성 의견 <img src=x>",
+});
 beforeEach(() => {
   Object.assign(process.env, {
     SESSION_SECRET: "test-only-secret-at-least-32-characters",
@@ -20,7 +30,7 @@ beforeEach(() => {
 });
 const delivered: typeof fetch = async () =>
   new Response("<main data-receipt=maumzip-forms-received-v1></main>", { status: 200 });
-test("survey schema requires separate consent, three valid ratings and rejects chat/recipient injection", () => {
+test("survey schema requires separate consent, a valid entry route and rejects chat/recipient injection", () => {
   const base = {
     requestId: crypto.randomUUID(),
     conversationId: crypto.randomUUID(),
@@ -34,8 +44,8 @@ test("survey schema requires separate consent, three valid ratings and rejects c
     { ...base, consent: false },
     { ...base, history: [] },
     { ...base, to: "other@example.test" },
-    { ...base, answers: { ...answers, comment: "a".repeat(501) } },
-    { ...base, answers: { ...answers, ease: 1.5 } },
+    { ...base, answers: { ...answers, improvementSuggestions: "a".repeat(501) } },
+    { ...base, answers: { ...answers, selfUnderstanding: 1.5 } },
     { ...base, answers: { ...answers, diary: "private" } },
   ])
     assert.equal(surveyRequestSchema.safeParse(bad).success, false);
@@ -52,21 +62,21 @@ test("Netlify payload contains only consented survey fields without chat, cookie
     assert.equal(String(url), "https://review.example.test/netlify-forms.html");
     const body = new URLSearchParams(String(init?.body));
     assert.equal(body.get("form-name"), "maumzip-experience");
-    assert.equal(body.get("자유의견"), answers.comment);
-    assert.equal(body.get("접수번호"), "r");
-    assert.ok(body.get("도움정도")!.startsWith("4 / 5"));
+    assert.equal(body.get("submissionId"), "r");
+    assert.equal(body.get("improvementSuggestions"), answers.improvementSuggestions);
+    assert.deepEqual(JSON.parse(body.get("answers")!), answers);
     assert.deepEqual(
       [...body.keys()].sort(),
       [
         "form-name",
         "bot-field",
-        "접수번호",
-        "설문버전",
+        "surveyVersion",
+        "submissionId",
         "선택동의",
-        "도움정도",
-        "사용편의",
-        "재이용의향",
-        "자유의견",
+        "answers",
+        "entryRoute",
+        "improvementSuggestions",
+        "organizationHelpfulness",
       ].sort(),
     );
     const headers = new Headers(init?.headers);
@@ -188,4 +198,37 @@ test("survey route enforces Origin, consent and honest setup response", async ()
   const result = await POST(request(body));
   assert.equal(result.status, 503);
   assert.equal(((await result.json()) as { code: string }).code, "SURVEY_SETUP");
+});
+
+test("route-only surveys preserve nulls, scale direction and conditional fields", () => {
+  for (const entryRoute of [null, undefined, "link"])
+    assert.equal(answersSchema.safeParse({ entryRoute }).success, false);
+  const sparse = answersSchema.parse({ entryRoute: "qr" });
+  assert.ok(Object.entries(sparse).every(([key, v]) => key === "entryRoute" || v === null));
+  const draft = updateSurvey(
+    {
+      entryRoute: "qr",
+      qrAccessEase: 5,
+      qrDiaryMotivation: 1,
+      qrFlowFeedback: "시험",
+      judgmentOrAwkwardness: "있었다",
+      awkwardnessDetail: "시험",
+    },
+    { entryRoute: "online_link", judgmentOrAwkwardness: "없었다" },
+  );
+  assert.equal(draft.qrAccessEase, undefined);
+  assert.equal(draft.awkwardnessDetail, undefined);
+  const hidden = answersSchema.parse({ ...draft, qrAccessEase: 4, awkwardnessDetail: "숨김" });
+  assert.equal(hidden.qrAccessEase, null);
+  assert.equal(hidden.awkwardnessDetail, null);
+  assert.equal(
+    surveyQuestions.find((q) => q.key === "disclosureBurden")!.scale![4],
+    "매우 부담됐어요",
+  );
+  for (const value of [0, 6, 1.5, "3"])
+    assert.equal(answersSchema.safeParse({ entryRoute: "qr", qrAccessEase: value }).success, false);
+  assert.equal(
+    answersSchema.safeParse({ entryRoute: "qr", conversationPace: "invalid" }).success,
+    false,
+  );
 });

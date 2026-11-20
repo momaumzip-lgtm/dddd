@@ -8,17 +8,21 @@ import type { Safety } from "./schemas";
 import { urgent, retainRisk, safetyReply, safetyText, hasSafetyClarification } from "./safety";
 export const streamReplySchema = z
   .object({
-    mode: z.enum(["continue", "complete", "safety", "refusal"]),
+    mode: z.enum(["continue", "complete", "close", "safety", "refusal"]),
     safety: z.enum(["normal", "check", "emergency", "violence"]),
     sentences: z.array(z.string().min(1).max(1200)).min(1).max(6),
   })
   .strict();
-export type StreamReply = z.infer<typeof streamReplySchema>;
+export type StreamReply = z.infer<typeof streamReplySchema> & {
+  diaryDraft?: string;
+  sourceQuote?: string;
+};
 export type StreamContext = {
   emotion: ReturnType<typeof selectionContext>;
   forceComplete: boolean;
   listening: boolean;
-  remainingQuestions: number;
+  skipDiary?: boolean;
+  exploring?: boolean;
   turn: number;
   previousSafety: Safety;
 };
@@ -80,6 +84,7 @@ export async function runStreamingChat(
   const messages: Message[] = [...args.history, { role: "user", content: args.message }];
   let safety = retainRisk(args.safety, urgent(args.message)),
     body = "",
+    diaryDraft: string | null = null,
     committed = false,
     questions = 0,
     mode = "complete",
@@ -129,7 +134,8 @@ export async function runStreamingChat(
           emotion: selectionContext(emotion),
           forceComplete: plan.forceComplete,
           listening: plan.listening,
-          remainingQuestions: plan.remainingQuestions,
+          skipDiary: plan.skipDiary,
+          exploring: plan.exploring,
           turn: plan.current.turns + 1,
           previousSafety: safety,
         },
@@ -151,14 +157,17 @@ export async function runStreamingChat(
             suppressed = true;
             return;
           }
-          if (plan.forceComplete && h.mode !== "complete")
+          if (plan.forceComplete && h.mode === "continue")
             throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
           const isQuestion =
             /[?？؟﹖]|(?:나요|까요|습니까|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
               sentence,
             );
           if (isQuestion) questions += Math.max(1, (sentence.match(/[?？؟﹖]/g) || []).length);
-          if (isQuestion && (questions > 1 || h.mode === "complete" || plan.forceComplete))
+          if (
+            isQuestion &&
+            (questions > 1 || h.mode !== "continue" || plan.listening || plan.forceComplete)
+          )
             throw new AppError(
               502,
               "QUESTION",
@@ -205,17 +214,31 @@ export async function runStreamingChat(
       if (!suppressed && body !== result.sentences.join(" "))
         throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
       mode = result.mode;
+      if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
+        const quote = result.sourceQuote?.trim();
+        if (!quote || !messages.some((m) => m.role === "user" && m.content.includes(quote)))
+          throw new AppError(
+            502,
+            "DRAFT_SOURCE",
+            "기록에 담을 표현을 확인하지 못했어요. 다시 요청해 주세요.",
+          );
+        const reviewed = await ai.moderate(result.diaryDraft);
+        if (reviewed.flagged)
+          throw new AppError(502, "OUTPUT_SAFETY", "기록 초안을 확인하지 못했어요.");
+        diaryDraft = result.diaryDraft;
+      }
     }
     const progress: Progress =
       safety !== "normal"
         ? { ...plan.current, completed: false }
         : {
             turns: plan.current.turns + (args.action === "summary" ? 0 : 1),
-            questions: Math.min(2, plan.current.questions + questions),
+            questions: plan.current.questions + questions,
             completed: mode !== "continue" || plan.forceComplete,
           };
-    const surveyReady = progress.completed && mode === "complete" && safety === "normal";
-    if (surveyReady) publish("\n\n" + JOURNAL_CLOSING);
+    const surveyReady =
+      progress.completed && (mode === "complete" || mode === "close") && safety === "normal";
+    if (surveyReady && mode === "complete" && !plan.skipDiary) publish("\n\n" + JOURNAL_CLOSING);
     progress.messageIds = [...(args.progress.messageIds || []), messageId];
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");
     await slot.stage(args.revision + 1);
@@ -223,6 +246,7 @@ export async function runStreamingChat(
     return {
       body,
       surveyReady,
+      diaryDraft,
       history: [...messages, { role: "assistant" as const, content: body }],
       safety,
       progress,

@@ -1,13 +1,16 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Check, LoaderCircle, Send } from "lucide-react";
+import { supportLink } from "@/lib/service-info";
 import { z } from "zod";
 import {
   SURVEY_VERSION,
   surveyQuestions,
-  surveyScale,
+  entryRoutes,
+  updateSurvey,
+  visibleQuestion,
+  type SurveyDraft,
   type SurveyConfig,
-  type SurveyAnswers,
 } from "@/lib/survey";
 type Session = { conversationId: string; token: string };
 type Attempt = {
@@ -16,7 +19,7 @@ type Attempt = {
   token: string;
   version: typeof SURVEY_VERSION;
   consent: true;
-  answers: SurveyAnswers;
+  answers: SurveyDraft;
 };
 class SurveyError extends Error {}
 export default function Survey({
@@ -34,9 +37,8 @@ export default function Survey({
   onSession: (value: Session) => void;
   onClose: () => void;
 }) {
-  const [ratings, setRatings] = useState({ helpfulness: 0, ease: 0, reuse: 0 }),
-    [comment, setComment] = useState(""),
-    [consent, setConsent] = useState(false);
+  const [answers, setAnswers] = useState<SurveyDraft>({});
+  const update = (change: SurveyDraft) => setAnswers((previous) => updateSurvey(previous, change));
   const [status, setStatus] = useState<"idle" | "sending" | "error" | "done">("idle"),
     [error, setError] = useState("");
   const [locked, setLocked] = useState(false);
@@ -52,14 +54,7 @@ export default function Survey({
     };
   }, []);
   async function submit() {
-    if (
-      busy.current ||
-      status === "done" ||
-      !config.ready ||
-      !consent ||
-      Object.values(ratings).some((r) => r < 1)
-    )
-      return;
+    if (busy.current || status === "done" || !config.ready || !answers.entryRoute) return;
     busy.current = true;
     setStatus("sending");
     setError("");
@@ -86,7 +81,7 @@ export default function Survey({
           requestId: crypto.randomUUID(),
           version: SURVEY_VERSION,
           consent: true,
-          answers: { ...ratings, comment: comment.trim() },
+          answers: { ...answers },
         };
         setLocked(true);
       }
@@ -124,7 +119,7 @@ export default function Survey({
           </span>
           <h2 id="survey-title">의견을 남겨 주셔서 고마워요</h2>
           <p role="status">설문이 접수되었어요. 더 편안한 사용 경험을 만드는 데 참고하겠습니다.</p>
-          <p className="fine-print">이메일 도착이나 수신자의 열람까지 확인했다는 뜻은 아니에요.</p>
+          <p className="fine-print">접수번호 {attempt.current?.requestId}</p>
           <button className="primary" onClick={onClose}>
             대화 화면으로 돌아가기
           </button>
@@ -137,9 +132,7 @@ export default function Survey({
             <br />
             사용 경험을 들려주세요
           </h2>
-          <p>
-            세 가지 문항과 자유 의견을 준비했어요. 참여하지 않아도 대화를 계속하거나 마칠 수 있어요.
-          </p>
+          <p>접속 경로만 골라도 제출할 수 있어요. 나머지는 답하고 싶은 문항만 골라주세요.</p>
           {!config.ready && (
             <p className="setup-note" role="status">
               설문 전송을 준비 중이에요. 현재는 응답을 제출할 수 없어요.
@@ -152,57 +145,82 @@ export default function Survey({
               void submit();
             }}
           >
-            {surveyQuestions.map((q) => (
-              <fieldset
-                key={q.key}
-                className="survey-question"
-                disabled={locked || status === "sending"}
-              >
-                <legend>{q.label}</legend>
-                <div className="rating-options">
-                  {surveyScale.map((label, i) => (
-                    <label key={label} className={ratings[q.key] === i + 1 ? "selected" : ""}>
-                      <input
-                        type="radio"
-                        name={q.key}
-                        value={i + 1}
-                        checked={ratings[q.key] === i + 1}
-                        required
-                        onChange={() => setRatings((value) => ({ ...value, [q.key]: i + 1 }))}
+            <fieldset className="survey-question" disabled={locked || status === "sending"}>
+              <legend>이번 AI 대화는 어떤 경로로 이용하셨나요? (필수)</legend>
+              {Object.entries(entryRoutes).map(([key, label]) => (
+                <label className="survey-option" key={key}>
+                  <input
+                    required
+                    type="radio"
+                    name="entryRoute"
+                    value={key}
+                    checked={answers.entryRoute === key}
+                    onChange={() => update({ entryRoute: key as keyof typeof entryRoutes })}
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+            {surveyQuestions
+              .filter((q) => visibleQuestion(q, answers))
+              .map((q) => {
+                const labels = q.scale ?? q.options;
+                return (
+                  <fieldset
+                    key={q.key}
+                    className="survey-question"
+                    disabled={locked || status === "sending"}
+                  >
+                    <legend>
+                      {q.label} <small>(선택)</small>
+                    </legend>
+                    {labels ? (
+                      <>
+                        {labels.map((label, i) => {
+                          const value = q.scale ? i + 1 : label;
+                          return (
+                            <label key={label} className="survey-option">
+                              <input
+                                name={q.key}
+                                type="radio"
+                                value={value}
+                                checked={answers[q.key] === value}
+                                onChange={() => update({ [q.key]: value })}
+                              />
+                              {q.scale && <b>{i + 1}</b>}
+                              {label}
+                            </label>
+                          );
+                        })}
+                        {answers[q.key] != null && (
+                          <button
+                            type="button"
+                            className="clear-answer"
+                            onClick={() => update({ [q.key]: null })}
+                          >
+                            이 응답 지우기
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <textarea
+                        aria-label={q.label}
+                        rows={3}
+                        maxLength={500}
+                        value={answers[q.key] ?? ""}
+                        onChange={(e) => update({ [q.key]: e.target.value })}
+                        placeholder="개인정보를 제외하고 적어주세요."
                       />
-                      <strong>{i + 1}</strong>
-                      <span className="sr-only">{label}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className="rating-captions">
-                  <span>전혀 그렇지 않아요</span>
-                  <span>매우 그래요</span>
-                </div>
-              </fieldset>
-            ))}
-            <div className="survey-comment">
-              <label htmlFor="survey-comment">
-                더 나아졌으면 하는 점 <span>(선택)</span>
-              </label>
-              <textarea
-                id="survey-comment"
-                autoComplete="off"
-                value={comment}
-                maxLength={500}
-                rows={3}
-                disabled={locked || status === "sending"}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="화면이나 이용 경험에 대한 의견을 남겨 주세요."
-              />
-              <small>{comment.length} / 500 · 실명·연락처·상담 내용은 적지 마세요.</small>
-            </div>
+                    )}
+                  </fieldset>
+                );
+              })}
             <details className="survey-disclosure">
               <summary>설문 응답은 어떻게 전달되나요?</summary>
               <p>
                 목적: 서비스 사용 경험 개선
                 <br />
-                항목: 위 세 문항의 점수와 직접 적은 자유 의견
+                항목: 접속 경로와 직접 답한 문항
                 <br />
                 수신: {config.recipient}의 운영 이메일
                 <br />
@@ -210,7 +228,7 @@ export default function Survey({
                 <br />
                 보관·삭제 기준: {config.retention}
                 <br />
-                문의·삭제 요청: {contact || "문의처 확인 중"}
+                문의 및 삭제 요청: <a href={supportLink}>{contact}</a>
               </p>
               <p>
                 채팅 원문·대화 요약·일기는 자동 첨부하지 않아요. 설문 응답은 Netlify Forms와 운영자
@@ -219,18 +237,11 @@ export default function Survey({
                 백업의 보관 기간은 별도예요.
               </p>
             </details>
-            <label className="survey-consent">
-              <input
-                type="checkbox"
-                checked={consent}
-                disabled={locked || status === "sending"}
-                onChange={(e) => setConsent(e.target.checked)}
-              />
-              <span>
-                위 안내에 따라 설문 응답을 Netlify Forms에 저장하고 운영자 이메일로 알리는 데
-                동의합니다. (선택)
-              </span>
-            </label>
+            <p className="fine-print">
+              제출을 선택하면 응답을 Netlify Forms에 저장하고 {config.recipient}의 운영 이메일로
+              전달하는 데 동의하게 됩니다. 보관 기준은 {config.retention} 참여를 원하지 않으면
+              대화로 돌아갈 수 있어요.
+            </p>
             {error && (
               <p className="error-note" role="alert">
                 {error}
@@ -245,12 +256,7 @@ export default function Survey({
             <button
               className="primary"
               type="submit"
-              disabled={
-                !config.ready ||
-                !consent ||
-                Object.values(ratings).some((r) => r < 1) ||
-                status === "sending"
-              }
+              disabled={!config.ready || status === "sending"}
             >
               {status === "sending" ? (
                 <>
@@ -265,7 +271,7 @@ export default function Survey({
               ) : (
                 <>
                   <Send size={17} />
-                  설문 제출하기
+                  동의하고 설문 제출하기
                 </>
               )}
             </button>

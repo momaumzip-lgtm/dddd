@@ -1,3 +1,4 @@
+import { answersSchema } from "../lib/survey";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -121,7 +122,10 @@ test("SQL rejects unknown operations, rolls back partial writes and expires meta
     );
     await gate.enter("s", "c", "r", 0);
     const survey = new SurveyGate(store, 1);
-    const answers = { helpfulness: 4, ease: 4, reuse: 4, comment: "합성 의견" };
+    const answers = answersSchema.parse({
+      entryRoute: "online_link",
+      improvementSuggestions: "합성 의견",
+    });
     const slot = await survey.enter("s", "c", "r", answers);
     await slot.finish(true);
     assert.equal((await survey.enter("s", "c", "r", answers)).alreadyAccepted, true);

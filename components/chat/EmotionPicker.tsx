@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { audience, supportPhone, supportLink } from "@/lib/service-info";
 import { Check } from "lucide-react";
 import {
   emotionCatalog,
@@ -48,7 +49,7 @@ export default function EmotionPicker({
         <br />
         단어를 골라주세요
       </h1>
-      <p>가까운 감정과 강도를 골라주세요. 보통 2~3번 이야기하면 짧게 정리할 수 있어요.</p>
+      <p>짧게 이야기하고 내 마음을 한두 문장으로 남겨보세요. 대화는 보통 3분 정도예요.</p>
       {chosen && !expanded ? (
         <div className="selection-card">
           <strong>
@@ -134,7 +135,7 @@ export default function EmotionPicker({
       )}
       {chosen && (!expanded || customOpen) && (
         <fieldset className="intensity-picker">
-          <legend>이 감정이 지금 얼마나 크게 느껴지나요?</legend>
+          <legend>그 일을 지금 떠올리면, 이 감정이 얼마나 크게 느껴지나요?</legend>
           <p>정확한 수치가 아니어도 괜찮아요. 지금 느껴지는 정도를 골라주세요.</p>
           <div className="intensity-options">
             {intensityBands.map((b) => (
@@ -165,6 +166,14 @@ export default function EmotionPicker({
         </button>
         {onCancel && <button onClick={onCancel}>이전 선택 유지하기</button>}
       </div>
+      {!onCancel && (
+        <footer className="participant-info">
+          <span>이용 대상: {audience}</span>
+          <span>
+            문의 및 삭제 요청: <a href={supportLink}>{supportPhone}</a>
+          </span>
+        </footer>
+      )}
     </section>
   );
 }

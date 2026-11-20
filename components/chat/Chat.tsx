@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { type Message, type PublicConfig } from "@/lib/config";
 import { z } from "zod";
+import DiaryDraft from "./DiaryDraft";
+import { supportLink } from "@/lib/service-info";
 import Survey from "./Survey";
 import BrandMark from "./BrandMark";
 import QuietGarden from "./QuietGarden";
@@ -36,7 +38,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
   const [started, setStarted] = useState(false),
     [emotion, setEmotion] = useState<EmotionSelection | null>(null),
     [complete, setComplete] = useState(false),
-    [turns, setTurns] = useState(0),
+    [diaries, setDiaries] = useState<Record<number, string>>({}),
     [streamText, setStreamText] = useState("");
   const receipt = useRef<{
     data: CompletedChat;
@@ -84,7 +86,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setEmotion(null);
     emotionRef.current = null;
     setComplete(false);
-    setTurns(0);
+    setDiaries({});
     setStreamText("");
     continueRef.current = false;
     setDraft("");
@@ -197,6 +199,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
         });
         if (!response.ok) {
           const failed = errorResponse.parse(await response.json());
+          if (epoch !== generation.current) return;
+          if (["SESSION", "STATE", "STALE"].includes(failed.code || "")) setSessionInvalid(true);
           if (failed.code === "CONTEXT") setConversationLimit(true);
           throw new VisibleError(failed.error);
         }
@@ -235,7 +239,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
         selectEmotion(emotionSelectionSchema.parse(data.emotion));
       performance.mark("chat-done:" + requestId);
       setComplete(data.completed);
-      setTurns(data.turns);
+      const note = data.diaryDraft;
+      if (note) setDiaries((previous) => ({ ...previous, [baseHistory.length + 1]: note }));
       continueRef.current = false;
       receipt.current = null;
       setHistory([
@@ -363,13 +368,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       "강도 미정"}
                 </span>
                 <button onClick={() => setPanel("emotion")}>바꾸기</button>
-                <small>
-                  {complete
-                    ? "대화 마침"
-                    : help
-                      ? "안전 확인"
-                      : "짧은 대화 · " + Math.min(turns + 1, 3) + " / 3"}
-                </small>
+                <small>{complete ? "대화 마침" : help ? "안전 확인" : "이야기 중"}</small>
               </div>
               <div
                 className="thread"
@@ -423,6 +422,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                         </span>
                       )}
                       <p className="bubble">{message.content}</p>
+                      {diaries[i] && <DiaryDraft initial={diaries[i]} />}
                     </div>
                   </div>
                 ))}
@@ -481,12 +481,32 @@ export default function Chat({ config }: { config: PublicConfig }) {
                     </div>
                   </div>
                 )}
+                {history.length > 0 &&
+                  !complete &&
+                  !help &&
+                  !pending &&
+                  !continueRef.current &&
+                  !sessionInvalid &&
+                  !conversationLimit && (
+                    <button
+                      type="button"
+                      className="continue-chat secondary"
+                      onClick={() =>
+                        void send({
+                          action: "summary",
+                          text: "지금까지 이야기한 내용으로 정리해 주세요.",
+                        })
+                      }
+                    >
+                      지금 정리하기
+                    </button>
+                  )}
                 {complete && !help && (
                   <button
                     className="continue-chat secondary"
                     onClick={() => {
                       setComplete(false);
-                      setTurns(0);
+
                       continueRef.current = true;
                       setSurveyInvite(false);
                       requestAnimationFrame(() => input.current?.focus());
@@ -506,7 +526,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                         setPanel("survey");
                       }}
                     >
-                      설문조사 참여하기
+                      사용 경험 알려주기
                     </a>
                     <small>선택 참여 · 채팅 내용은 보내지 않아요</small>
                   </div>
@@ -655,6 +675,9 @@ export default function Chat({ config }: { config: PublicConfig }) {
               한국 기준 안내예요. 해외에서는 현지 긴급전화를 이용해 주세요. 버튼을 누르면 기기의
               전화 앱이 열립니다. 이 서비스가 대신 신고하거나 상담사에게 연결하지는 않아요.
             </p>
+            <p>
+              문의 및 삭제 요청: <a href={supportLink}>{config.contact}</a>
+            </p>
           </>
         )}
         {panel === "privacy" && (
@@ -695,16 +718,16 @@ export default function Chat({ config }: { config: PublicConfig }) {
             </a>
             <h3>선택 설문은 별도로 전달돼요</h3>
             <p>
-              마무리 설문에 참여하고 별도로 동의한 경우에만 점수와 자유 의견을 운영자 이메일로
-              알리고 Netlify Forms에 저장해요. 채팅·일기는 자동 첨부하지 않아요. 설문 내용은
-              OpenAI로 보내지 않으며, Netlify Forms와 메일함의 보관 기준은 설문 화면에서 따로
+              마무리 설문에 참여하고 별도로 동의한 경우에만 접속 경로와 선택한 응답을 운영자
+              이메일로 알리고 Netlify Forms에 저장해요. 채팅·일기는 자동 첨부하지 않아요. 설문
+              내용은 OpenAI로 보내지 않으며, Netlify Forms와 메일함의 보관 기준은 설문 화면에서 따로
               안내해요.
             </p>
             <h3>운영 및 문의</h3>
             <p>
               운영주체: {config.operator || "운영 정보 확인 중"}
               <br />
-              문의·삭제 요청: {config.contact || "문의처 확인 중"}
+              문의 및 삭제 요청: <a href={supportLink}>{config.contact}</a>
               <br />
               이용 대상: {config.policy.targetAge || "이용 대상 안내 확인 중"}
             </p>

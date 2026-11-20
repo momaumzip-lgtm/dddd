@@ -22,8 +22,6 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 | `OPENAI_API_KEY`            | 운영자가 직접 등록하는 기존 OpenAI API 키. 서버 비밀 값                |
 | `OPENAI_MODEL`              | `gpt-6-luna`                                                           |
 | `OPERATOR_NAME`             | maumzip                                                                |
-| `SUPPORT_CONTACT`           | 010-6675-9496                                                          |
-| `TARGET_AGE_NOTICE`         | 20~40대 중심                                                           |
 | `DATA_PROCESSING_NOTICE`    | 실제 외부 처리·보관 조건을 확인한 안내                                 |
 | `HOST_LOG_POLICY_CONFIRMED` | 호스팅·APM 본문 로그 및 보존 설정 확인 후 `true`                       |
 | `SURVEY_RETENTION_NOTICE`   | Netlify Forms와 운영자 메일함에서 접수일부터 1년 보관 후 운영자가 삭제 |
@@ -46,9 +44,9 @@ DB는 기존 Netlify 무료 플랜 크레딧을 사용합니다. 현재 공식 �
 2. 배포 시 `public/netlify-forms.html`의 `maumzip-experience` 폼이 감지되는지 확인합니다. Next.js 서버 렌더링과 별개인 정적 HTML 스키마가 필요합니다.
 3. **Forms → Notifications**에서 Email 알림을 `momaum.zip@gmail.com`으로 설정합니다. 폼이 감지되면 대상도 `maumzip-experience`로 지정합니다. 계정 소속 이메일이면 별도 발신 도메인 인증이 필요하지 않습니다.
 4. `NETLIFY_FORMS_ENABLED=true`와 처리·보관 안내를 설정하고 재배포합니다. 알림 설정과 수신 주소는 Netlify 대시보드에서 관리하며 앱 환경변수에 이메일 키를 넣지 않습니다.
-5. 운영 화면에서 합성 설문 한 건을 제출해 Netlify 저장과 이메일 수신을 각각 확인합니다. 스팸으로 분류된 항목은 일반 알림 대상에서 빠질 수 있으므로 스팸 목록도 확인합니다.
+5. 운영 데이터와 분리된 검증용 Forms에서 온라인·QR 응답을 제출해 Netlify 저장과 이메일 수신을 각각 확인합니다. 스팸으로 분류된 항목은 일반 알림 대상에서 빠질 수 있으므로 스팸 목록도 확인합니다.
 
-점수·자유 의견과 선택 동의·버전·무작위 접수번호만 Forms로 전달합니다. 채팅·일기·요약·세션 쿠키·서명 토큰은 첨부하지 않습니다. UI 제출은 `/api/survey`에서 서명·Origin·크기·문항·공유 한도를 확인하고 URL 인코딩하여 고정된 운영 도메인의 Forms 엔드포인트로 보냅니다.
+접속 경로, 직접 답한 문항, 제출 동의·버전·무작위 접수번호만 Forms로 전달합니다. 채팅·일기·요약·세션 쿠키·서명 토큰은 첨부하지 않습니다. UI 제출은 `/api/survey`에서 서명·Origin·크기·문항·공유 한도를 확인하고 URL 인코딩하여 고정된 운영 도메인의 Forms 엔드포인트로 보냅니다.
 
 Forms는 공개 접수 기능이므로 직접 POST에는 앱 API의 서명·한도가 적용되지 않습니다. Netlify 스팸 필터와 honeypot을 함께 사용하며, 이를 인증된 설문 통계로 간주하지 않습니다. Forms에는 공급자 중복 방지 API가 없어 앱 DB가 대화당 외부 전송 시도 한 번만 허용합니다. 응답이 유실돼도 자동·수동 재전송을 하지 않습니다. 같은 요청의 재확인은 앱 DB의 접수 상태만 읽으며, 불확실한 경우 운영자가 접수번호로 Forms를 확인합니다.
 
@@ -63,3 +61,7 @@ Forms는 공개 접수 기능이므로 직접 POST에는 앱 API의 서명·한�
 현재 UI의 스트리밍 일반 대화는 입력 moderation, 유료 생성 1회, 문장별 누적 출력 moderation을 거칩니다. 입력이 flagged이거나 안전 확인 상태이면 별도 맥락 분류가 추가될 수 있습니다. 과거 배포에서 열린 클라이언트의 JSON 호환 경로는 이전 분류·생성·검수 경로를 유지합니다. 실제 비용은 토큰 합계에 따라 달라지므로 호출 수 감소를 고정된 비용 절감률로 해석하지 않습니다. 응답 길이는 목표로 유도하며, 길이 때문에 재생성하지 않습니다. 12초 호출·45초 전체 예산과 기존 공유 한도를 유지합니다. 자세한 흐름은 `docs/CONVERSATION.md`에 있습니다.
 
 공식 참고: [Netlify Next.js](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/), [함수 실행 제한](https://docs.netlify.com/build/functions/configuration/), [모델 정보](https://developers.openai.com/api/docs/models/gpt-6-luna), [모델 종료 일정](https://developers.openai.com/api/docs/deprecations).
+
+공개 이용 대상과 문의 및 삭제 요청 전화번호는 `lib/service-info.ts`에서 관리합니다. 이전 배포의 연락처·연령 환경변수는 읽지 않습니다.
+
+설문 v2는 기존 `maumzip-experience`의 알림 연결을 사용합니다. Netlify Forms에서 `submissionId`로 접수를 찾습니다. `surveyVersion`으로 이전 응답과 구별합니다. 숫자·null을 보존한 전체 응답은 `answers` JSON에 있고, 응답한 문항은 같은 이름의 필드에서도 확인할 수 있습니다. 접속 경로만 필수이며 온라인 선택 시 QR 항목, 불편 경험을 선택하지 않으면 상세 의견을 비웁니다. 한 접수번호로 다른 답을 보낼 수 없습니다.

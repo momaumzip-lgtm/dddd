@@ -112,16 +112,17 @@ test("bands and unknown are categorical; corrections reset intensity and respect
     "서운함",
   );
 });
-test("three turns carry full ordered context and current emotion; signed completion is required to continue", async () => {
+test("four turns carry full ordered context and current emotion; signed completion is required to continue", async () => {
   const db = new LuaStore(),
     gate = new Gate(db, cap),
     p = provider();
   let a: any = args();
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const chunks: string[] = [];
+    if (i === 3) a.message = "지금 끝내자";
     const r = await runStreamingChat(a, gate, p.ai, (s) => chunks.push(s));
     await gate.acknowledge(a.sid, a.cid, a.rid, r.revision);
-    assert.equal(r.progress.completed, i === 2);
+    assert.equal(r.progress.completed, i === 3);
     assert.equal(r.progress.turns, i + 1);
     assert.equal(chunks.join(""), r.body);
     assert.equal(p.calls[i].input.length, 2 * i + 1);
@@ -147,14 +148,14 @@ test("three turns carry full ordered context and current emotion; signed complet
     () => {},
   );
   assert.equal(continued.progress.turns, 1);
-  assert.equal(continued.history.length, 8);
+  assert.equal(continued.history.length, 10);
   await assert.rejects(
     runStreamingChat({ ...args(), action: "continue" }, gate, p.ai, () => {}),
     /먼저 마무리/,
   );
 });
-test("early completion, do-not-know, listening and explicit ending never require another question", async () => {
-  for (const message of ["정리해줘", "그만할래", "모르겠어", "그냥 들어줘", "조언은 싫어요"]) {
+test("early completion and explicit ending never require another question", async () => {
+  for (const message of ["정리해줘", "그만할래", "지금 끝내자"]) {
     const p = provider(),
       r = await runStreamingChat(
         { ...args(), message },
@@ -328,7 +329,7 @@ test("production SDK streams actual text fields before completion without routin
       emotion: selectionContext(emotion),
       forceComplete: false,
       listening: false,
-      remainingQuestions: 2,
+      exploring: false,
       turn: 1,
       previousSafety: "normal",
     },
@@ -342,6 +343,28 @@ test("production SDK streams actual text fields before completion without routin
   assert.equal(calls[0].store, false);
   assert.equal(calls[0].reasoning.effort, "low");
   assert.ok(!calls[0].instructions.includes("긍정 감정: 57"));
+  const modes = calls[0].text.format.schema.properties.reply.anyOf;
+  const completion = modes.find(
+    (branch: { properties: { mode: { const: string } } }) =>
+      branch.properties.mode.const === "complete",
+  );
+  assert.deepEqual(Object.keys(completion.properties).slice(0, 3), ["mode", "safety", "sentences"]);
+  assert.ok(completion.required.includes("sourceQuote"));
+  const custom = "사용자가 직접 지은 감정";
+  await ai.streamReply(
+    [{ role: "user", content: "오늘 이야기" }],
+    {
+      emotion: selectionContext({ ...emotion, emotionId: "custom", customLabel: custom }),
+      forceComplete: false,
+      listening: false,
+      turn: 1,
+      previousSafety: "normal",
+    },
+    async () => {},
+  );
+  assert.equal(calls[1].instructions.includes(custom), false);
+  assert.ok(calls[1].input[0].content.includes(custom));
+  assert.deepEqual(calls[1].input.at(-1), { role: "user", content: "오늘 이야기" });
 });
 test("signed progress is bound to session and cannot be replaced with a client turn counter", async () => {
   process.env.SESSION_SECRET = "test-only-secret-at-least-32-characters";
@@ -379,7 +402,7 @@ test("already committed user-message ID cannot count or append twice under a new
   );
   assert.equal(p.calls.length, 1);
 });
-test("third-turn question is blocked and the old history and signed progress remain retryable", async () => {
+test("question inside a closing summary is blocked and the old history and signed progress remain retryable", async () => {
   const p = provider();
   p.ai.streamReply = async (_i, _c, publish) => {
     await publish("왜 그런가요?", { mode: "complete", safety: "normal" });
@@ -399,7 +422,7 @@ test("SDK treats failed, incomplete, refusal and missing terminal streams as fai
     emotion: selectionContext(emotion),
     forceComplete: true,
     listening: false,
-    remainingQuestions: 0,
+    exploring: false,
     turn: 3,
     previousSafety: "normal" as const,
   };
@@ -553,7 +576,15 @@ test("production response schema accepts a one-line completion and rejects a mul
     ["핵심 생각을 간단히 정리했어요."],
     ["핵심 생각을 정리했어요.", "추가 문장이에요."],
   ]) {
-    const wire = JSON.stringify({ reply: { mode: "complete", safety: "normal", sentences } });
+    const wire = JSON.stringify({
+      reply: {
+        mode: "complete",
+        safety: "normal",
+        sentences,
+        diaryDraft: "나는 노력도 알아주길 바랐다.",
+        sourceQuote: "노력도 알아주길",
+      },
+    });
     const ai = new AI("gpt-6-luna", 1000, {
       fetch: async () =>
         new Response(
@@ -575,7 +606,7 @@ test("production response schema accepts a one-line completion and rejects a mul
         emotion: selectionContext(emotion),
         forceComplete: true,
         listening: false,
-        remainingQuestions: 0,
+        exploring: false,
         turn: 3,
         previousSafety: "normal",
       },
@@ -584,4 +615,63 @@ test("production response schema accepts a one-line completion and rejects a mul
     if (sentences.length === 1) assert.equal((await result).sentences.length, 1);
     else await assert.rejects(result);
   }
+});
+
+test("listening, uncertainty, continued exploration and diary preference do not impose a turn limit", () => {
+  const progress = { turns: 4, questions: 4, completed: false };
+  for (const text of ["그냥 들어줘", "잘 모르겠어", "더 살펴보고 싶어요", "기록은 안 할래"])
+    assert.equal(responsePlan(progress, "chat", text, []).forceComplete, false);
+  assert.equal(responsePlan(progress, "chat", "더 살펴보고 싶어요", []).exploring, true);
+  assert.equal(
+    responsePlan(progress, "chat", "지금 끝내자", [{ role: "user", content: "기록은 안 할래" }])
+      .skipDiary,
+    true,
+  );
+});
+test("only supported draft text reaches the completed receipt", async () => {
+  const message = "오래 준비한 걸 알아주길 바랐어.";
+  for (const quote of ["오래 준비한 걸", "없는 말"]) {
+    const p = provider("complete");
+    const draft = "나는 오래 준비한 걸 알아주길 바랐다.";
+    p.ai.streamReply = async (_m, _c, publish) => {
+      const reply = {
+        mode: "complete" as const,
+        safety: "normal" as const,
+        sentences: ["준비한 시간도 알아주는 말을 바랐군요."],
+        diaryDraft: draft,
+        sourceQuote: quote,
+      };
+      await publish(reply.sentences[0], { mode: reply.mode, safety: reply.safety });
+      return reply;
+    };
+    const result = runStreamingChat(
+      { ...args(), message },
+      new Gate(new LuaStore(), cap),
+      p.ai,
+      () => {},
+    );
+    if (quote === "없는 말") await assert.rejects(result, /표현을 확인/);
+    else assert.equal((await result).diaryDraft, draft);
+  }
+});
+test("declining a diary closes without a writing invitation and still allows the survey", async () => {
+  const p = provider();
+  p.ai.streamReply = async (_m, _c, publish) => {
+    const r = {
+      mode: "close" as const,
+      safety: "normal" as const,
+      sentences: ["이야기는 여기에서 마칠게요."],
+    };
+    await publish(r.sentences[0], { mode: r.mode, safety: r.safety });
+    return r;
+  };
+  const r = await runStreamingChat(
+    { ...args(), message: "기록은 안 할래. 이제 끝내자." },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    () => {},
+  );
+  assert.equal(r.surveyReady, true);
+  assert.equal(r.diaryDraft, null);
+  assert.ok(!r.body.includes(JOURNAL_CLOSING));
 });

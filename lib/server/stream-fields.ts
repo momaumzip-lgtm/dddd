@@ -37,7 +37,8 @@ export class ReplyFields {
           } else {
             if (this.key === "mode") this.mode = value;
             else if (this.key === "safety") this.safety = value;
-            else throw new Error("Unknown response field");
+            else if (this.key !== "diaryDraft" && this.key !== "sourceQuote")
+              throw new Error("Unknown response field");
           }
         }
       } else if (c === '"') {

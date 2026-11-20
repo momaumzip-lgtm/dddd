@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       throw new AppError(
         409,
         "CONTEXT",
-        "이 대화가 담을 수 있는 길이에 도달했어요. 일기 틀로 정리한 뒤 새 대화를 시작해 주세요.",
+        "이 대화가 담을 수 있는 길이에 도달했어요. 필요한 내용을 옮겨 적고 새 대화를 시작할 수 있어요.",
       );
     const parsed = chatSchema.safeParse(raw);
     if (!parsed.success) throw new AppError(400, "INPUT", "입력 내용을 확인해 주세요.");
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
       throw new AppError(
         409,
         "CONTEXT",
-        "이 대화가 담을 수 있는 길이에 도달했어요. 화면의 일기 틀로 정리하거나 새 대화를 시작해 주세요.",
+        "이 대화가 담을 수 있는 길이에 도달했어요. 필요한 내용을 옮겨 적고 새 대화를 시작할 수 있어요.",
       );
     const s = await validateState(
       req.cookies.get("maeum_session")?.value,
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       throw new AppError(
         503,
         "SETUP",
-        "AI 대화 설정을 준비 중이에요. 도움 받기와 일기 틀은 계속 이용할 수 있어요.",
+        "AI 대화 설정을 준비 중이에요. 도움 받기는 계속 이용할 수 있어요.",
       );
     const { AI } = await import("@/lib/server/openai");
     if (req.headers.get("accept")?.includes("application/x-ndjson")) {
@@ -103,6 +103,7 @@ export async function POST(req: NextRequest) {
               help: result.safety !== "normal",
               completed: result.progress.completed,
               surveyReady: result.surveyReady,
+              diaryDraft: result.diaryDraft,
               turns: result.progress.turns,
               questions: result.progress.questions,
               emotion: result.emotion,

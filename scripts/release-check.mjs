@@ -1,11 +1,5 @@
 // Operational gate only. API credentials are deliberately outside this release check's scope.
-const required = [
-  "OPERATOR_NAME",
-  "SUPPORT_CONTACT",
-  "TARGET_AGE_NOTICE",
-  "DATA_PROCESSING_NOTICE",
-  "SURVEY_RETENTION_NOTICE",
-];
+const required = ["OPERATOR_NAME", "DATA_PROCESSING_NOTICE", "SURVEY_RETENTION_NOTICE"];
 const missing = required.filter((key) => !process.env[key]?.trim());
 if (process.env.HOST_LOG_POLICY_CONFIRMED !== "true")
   missing.push("HOST_LOG_POLICY_CONFIRMED=true");

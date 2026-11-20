@@ -218,9 +218,26 @@ export class AI {
     context: StreamContext,
     onSentence: (sentence: string, header: { mode: string; safety: string }) => Promise<void>,
   ) {
+    // Free-form emotion labels belong to user input; only catalog labels and server flags enter instructions.
+    const freeLabel =
+      context.emotion.category === "unknown" && context.emotion.emotion !== "잘 모르겠어요";
+    const trustedContext = freeLabel
+      ? { ...context, emotion: { ...context.emotion, emotion: "직접 입력" } }
+      : context;
+    const messages = freeLabel
+      ? [
+          {
+            role: "user" as const,
+            content: JSON.stringify({ 선택한감정: context.emotion.emotion }),
+          },
+          ...input,
+        ]
+      : input;
     return this.request(async (signal) => {
       const complete = streamReplySchema.extend({
         mode: z.literal("complete"),
+        diaryDraft: z.string().trim().min(1).max(500),
+        sourceQuote: z.string().trim().min(1).max(200),
         sentences: z
           .array(
             z
@@ -237,13 +254,18 @@ export class AI {
         mode: z.literal("continue"),
         sentences: z.array(z.string().min(1).max(600)).min(1).max(2),
       });
-      const schema = z
-        .object({
-          reply: context.forceComplete
-            ? z.discriminatedUnion("mode", [complete, safety, refusal])
-            : z.discriminatedUnion("mode", [ongoing, complete, safety, refusal]),
-        })
-        .strict();
+      const close = streamReplySchema.extend({
+        mode: z.literal("close"),
+        sentences: z.array(z.string().min(1).max(600)).length(1),
+      });
+      const replies = z.discriminatedUnion("mode", [
+        safety,
+        refusal,
+        ...(context.forceComplete ? [] : [ongoing]),
+        ...(context.exploring ? [] : [close]),
+        ...(context.exploring || context.skipDiary ? [] : [complete]),
+      ]);
+      const schema = z.object({ reply: replies }).strict();
       const stream = await this.client.responses.create(
         {
           model: this.model,
@@ -260,14 +282,14 @@ export class AI {
             BRIEF_PROMPT +
             "\n" +
             (context.forceComplete
-              ? "이번 답변은 질문 없는 한 줄 요약입니다. 이미 들은 상황과 정리된 생각을 문장 하나로만 요약하세요. 질문·추가 설명 요청·인사·다이어리 안내는 쓰지 마세요. 다이어리 안내는 서버가 붙입니다."
-              : "이번 답변은 필요한 질문 딱 하나만 하거나, 충분히 알면 곧바로 마무리하세요.") +
+              ? "이번에는 질문 없이 마무리하세요. 기록 거절이면 close로 짧게 인사하세요."
+              : "한 가지씩 이야기하세요. 사용자가 더 이야기하려 하면 continue로 이어가세요.") +
             (context.listening
               ? " 사용자는 조언을 원하지 않습니다. 행동 권유나 질문 없이 이해한 내용만 반영하세요."
               : "") +
             "\n검증된 현재 상태(JSON 데이터): " +
-            JSON.stringify(context),
-          input,
+            JSON.stringify(trustedContext),
+          input: messages,
           text: { format: zodTextFormat(schema, "brief_reply") },
         },
         { signal },

@@ -149,7 +149,7 @@ export async function runChat(
           throw new AppError(
             503,
             "QUOTA",
-            "AI 이용 설정을 확인해야 해요. 도움 받기와 일기 틀은 계속 이용할 수 있어요.",
+            "AI 이용 설정을 확인해야 해요. 도움 받기는 계속 이용할 수 있어요.",
           );
         if (status === 429)
           throw new AppError(

@@ -6,9 +6,9 @@ import { DatabaseStore } from "@/lib/server/database";
 import { AppError } from "@/lib/server/errors";
 export async function POST(request: NextRequest) {
   try {
-    const result = surveyRequestSchema.safeParse(await readJson(request, 6000));
+    const result = surveyRequestSchema.safeParse(await readJson(request, 16000));
     if (!result.success)
-      throw new AppError(400, "SURVEY_INPUT", "세 문항의 응답과 선택 동의 여부를 확인해 주세요.");
+      throw new AppError(400, "SURVEY_INPUT", "접속 경로와 입력한 응답을 확인해 주세요.");
     const p = result.data;
     const sid = await surveyIdentity(
       request.cookies.get("maeum_session")?.value,
