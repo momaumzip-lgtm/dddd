@@ -31,7 +31,11 @@ export interface Provider {
     stage: string,
     noQuestions: boolean,
   ): Promise<Reply>;
-  audit(messages: Message[], candidate: string): Promise<{ safe: boolean }>;
+  audit(
+    messages: Message[],
+    candidate: string,
+    summary?: boolean,
+  ): Promise<{ safe: boolean; reason?: string }>;
 }
 export async function runChat(
   args: {
@@ -91,9 +95,13 @@ export async function runChat(
             const outputCheck = await ai.moderate(candidate);
             await slot.extra();
             phase = "output_review";
-            const audit = await ai.audit(messages, candidate);
+            const audit = await ai.audit(messages, candidate, args.summary);
             if (outputCheck.flagged || !audit.safe) {
-              console.warn("ai_check_rejected", { phase: "output_review" });
+              console.warn("ai_check_rejected", {
+                phase: "output_review",
+                moderationFlagged: outputCheck.flagged,
+                auditReason: audit.reason,
+              });
               body = fallback;
               notice = true;
             } else {

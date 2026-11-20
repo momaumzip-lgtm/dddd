@@ -67,7 +67,7 @@ function fixture() {
           ? route
           : name === "coach_reply"
             ? { ...reply, ...(listening ? { question: null, stage: "listen" } : {}) }
-            : { safe: true },
+            : { safe: true, reason: "none" },
       ),
     );
   };
