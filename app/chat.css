@@ -1196,6 +1196,10 @@ dialog .fine-print {
   }
 }
 @media (max-width: 600px) {
+  /* Keep the hosting badge clear of the composer and its character count. */
+  body:has(#nl-badge-frame) .app-shell {
+    padding-bottom: 56px;
+  }
   :root {
     background: #fff;
   }
