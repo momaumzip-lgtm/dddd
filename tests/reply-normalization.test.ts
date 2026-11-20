@@ -24,3 +24,17 @@ test("normalization keeps the single explicit question and never invents an empt
     false,
   );
 });
+test("duplicated period-ended questions leave only the final single question", () => {
+  const normalized = normalizeReply(
+    {
+      ...reply,
+      body: "시간을 맞추지 못하면 무능해 보일 것 같다고 느끼셨네요. 남은 일은 무엇인가요.",
+      question:
+        "오늘은 어디까지 마치셨고 남은 일은 무엇인가요. 그때 가장 바랐던 도움은 무엇인가요?",
+    },
+    false,
+  );
+  assert.equal(normalized.body, "시간을 맞추지 못하면 무능해 보일 것 같다고 느끼셨네요.");
+  assert.equal(normalized.question, "그때 가장 바랐던 도움은 무엇인가요?");
+  assert.equal(validateReply(normalized, false), true);
+});

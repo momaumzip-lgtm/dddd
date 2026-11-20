@@ -23,7 +23,7 @@ export const replySchema = z
     question: z
       .string()
       .max(180)
-      .regex(/^$|^[^?？]*[?？]$/)
+      .regex(/^$|^[^?？.。!！\n]+[?？]$/)
       .nullable(),
     stage: z.enum(["emotion", "thought", "need", "diary", "listen", "end"]),
     safety: z.enum(["normal", "check", "emergency", "violence"]),
