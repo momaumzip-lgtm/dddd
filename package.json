@@ -1,0 +1,45 @@
+{
+  "name": "maumzip",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3000",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --conditions=react-server --import tsx --test tests/*.test.ts",
+    "qr": "node scripts/qr.mjs",
+    "release:check": "node --env-file-if-exists=.env.local scripts/release-check.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm test && npm run typecheck && npm run format:check && npm run build"
+  },
+  "dependencies": {
+    "jose": "^6.1.0",
+    "lucide-react": "^1.31.0",
+    "next": "16.4.6",
+    "openai": "7.59.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "server-only": "0.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "fengari": "^0.1.5",
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4",
+    "tailwindcss": "4.2.1",
+    "tsx": "^4.20.0",
+    "typescript": "5.9.3",
+    "prettier": "^3.8.0"
+  }
+}
