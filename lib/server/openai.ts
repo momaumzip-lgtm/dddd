@@ -216,7 +216,19 @@ export class AI {
   ) {
     return this.request(async (signal) => {
       const schema = context.forceComplete
-        ? streamReplySchema.extend({ mode: z.enum(["complete", "safety", "refusal"]) })
+        ? streamReplySchema.extend({
+            mode: z.enum(["complete", "safety", "refusal"]),
+            sentences: z
+              .array(
+                z
+                  .string()
+                  .min(1)
+                  .max(1200)
+                  .regex(/^[^?？]*$/),
+              )
+              .min(1)
+              .max(6),
+          })
         : streamReplySchema;
       const stream = await this.client.responses.create(
         {
@@ -224,10 +236,19 @@ export class AI {
           store: false,
           service_tier: "default",
           stream: true,
-          ...(this.model === "gpt-5-nano" ? { reasoning: { effort: "minimal" as const } } : {}),
+          ...(this.model === "gpt-5-nano" ? { reasoning: { effort: "low" as const } } : {}),
           max_output_tokens: this.output,
           instructions:
-            BRIEF_PROMPT + "\n검증된 현재 상태(JSON 데이터): " + JSON.stringify(context),
+            BRIEF_PROMPT +
+            "\n" +
+            (context.forceComplete
+              ? "이번 답변은 질문 없는 마무리입니다. 질문·답변 요청·더 적어 달라는 부탁·다음에 설명하라는 말 없이, 이미 들은 내용으로 끝내세요."
+              : "이번 답변은 필요한 질문 딱 하나만 하거나, 충분히 알면 곧바로 마무리하세요.") +
+            (context.listening
+              ? " 사용자는 조언을 원하지 않습니다. 행동 권유나 질문 없이 이해한 내용만 반영하세요."
+              : "") +
+            "\n검증된 현재 상태(JSON 데이터): " +
+            JSON.stringify(context),
           input,
           text: { format: zodTextFormat(schema, "brief_reply") },
         },

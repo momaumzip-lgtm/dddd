@@ -338,7 +338,7 @@ test("production SDK streams actual text fields before completion without routin
   assert.equal(calls.length, 1);
   assert.equal(calls[0].stream, true);
   assert.equal(calls[0].store, false);
-  assert.equal(calls[0].reasoning.effort, "minimal");
+  assert.equal(calls[0].reasoning.effort, "low");
   assert.ok(!calls[0].instructions.includes("긍정 감정: 57"));
 });
 test("signed progress is bound to session and cannot be replaced with a client turn counter", async () => {
