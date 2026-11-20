@@ -153,10 +153,12 @@ export async function runStreamingChat(
           }
           if (plan.forceComplete && h.mode !== "complete")
             throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
-          const isQuestion = /[?？]|(?:나요|까요|습니까|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
-            sentence,
-          );
-          if (isQuestion && (++questions > 1 || h.mode === "complete" || plan.forceComplete))
+          const isQuestion =
+            /[?？]|(?:나요|까요|습니까|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
+              sentence,
+            );
+          if (isQuestion) questions += Math.max(1, (sentence.match(/[?？]/g) || []).length);
+          if (isQuestion && (questions > 1 || h.mode === "complete" || plan.forceComplete))
             throw new AppError(
               502,
               "QUESTION",
@@ -177,6 +179,15 @@ export async function runStreamingChat(
               502,
               "OUTPUT_SAFETY",
               "답변의 안전을 확인하지 못했어요. 다시 요청할 수 있어요.",
+            );
+          if (
+            h.mode === "complete" &&
+            /(?:알려|말씀해).{0,8}(?:주면|주시면|주세요|주실|줄래)/.test(sentence)
+          )
+            throw new AppError(
+              502,
+              "QUESTION",
+              "추가 답변을 요구하지 않는 정리를 완성하지 못했어요. 다시 요청할 수 있어요.",
             );
           const checkStart = performance.now();
           const checked = await ai.moderate((body ? body + " " : "") + sentence);
