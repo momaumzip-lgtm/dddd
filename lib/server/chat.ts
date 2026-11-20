@@ -6,6 +6,7 @@ import {
   retainRisk,
   wantsNoQuestions,
   validateReply,
+  replyFormatIssue,
   safetyText,
   hasSafetyClarification,
   safetyReply,
@@ -78,7 +79,10 @@ export async function runChat(
           safety = retainRisk(safety, reply.safety);
           if (safety !== "normal") body = safetyText[safety];
           else if (!validateReply(reply, noQuestions)) {
-            console.warn("ai_check_rejected", { phase: "reply_format" });
+            console.warn("ai_check_rejected", {
+              phase: "reply_format",
+              reason: replyFormatIssue(reply, noQuestions),
+            });
             body = fallback;
             notice = true;
           } else {

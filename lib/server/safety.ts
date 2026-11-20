@@ -51,23 +51,26 @@ export function safetyReply(previous: Safety, current: Exclude<Safety, "normal">
 }
 export const wantsNoQuestions = (text: string) =>
   /그냥\s*들어|질문.{0,8}(싫|하지\s*마|말고|원하지)|그만할|끝낼|모르겠/.test(text);
-export function validateReply(reply: Reply, noQuestions: boolean) {
+export function replyFormatIssue(reply: Reply, noQuestions: boolean) {
   const text = [reply.body, reply.question].filter(Boolean).join(" ");
   const sentences = text.split(/(?<=[.!?。？！])\s+|\n+/).filter(Boolean);
+  if (sentences.length > 4) return "sentence_count";
+  if (text.length > 800) return "length";
+  if (/[?？]/.test(reply.body)) return "body_question";
   if (
-    sentences.length > 4 ||
-    text.length > 800 ||
-    /[?？]/.test(reply.body) ||
-    (reply.question &&
-      (!/[?？]$/.test(reply.question) || (reply.question.match(/[?？]/g) || []).length !== 1)) ||
-    (noQuestions && reply.question)
+    reply.question &&
+    (!/[?？]$/.test(reply.question) || (reply.question.match(/[?？]/g) || []).length !== 1)
   )
-    return false;
+    return "question_punctuation";
+  if (noQuestions && reply.question) return "unwanted_question";
   // Reject obvious compound prompts. A second contextual audit checks meaning, claims, and instructions.
   if (
     reply.question &&
     /그리고|또한|무엇.*어떻|어떤.*왜|나요.*나요|인지.*인지/.test(reply.question)
   )
-    return false;
-  return true;
+    return "compound_question";
+  return null;
+}
+export function validateReply(reply: Reply, noQuestions: boolean) {
+  return replyFormatIssue(reply, noQuestions) === null;
 }
