@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { SignJWT } from "jose";
-import { Gate, RedisStore } from "../lib/server/limits";
+import { Gate } from "../lib/server/limits";
 import { LuaStore } from "./store";
 import { runChat, type Provider } from "../lib/server/chat";
 import { newSession, validateState, state, verify, sign, hash } from "../lib/server/session";
@@ -39,7 +39,7 @@ function provider(overrides: Partial<Provider> = {}) {
   };
   return { ai, count: () => generations };
 }
-test("actual Lua atomically admits exactly one same request across 40 parallel callers", async () => {
+test("reference specification atomically admits exactly one same request across 40 parallel callers", async () => {
   const db = new LuaStore(),
     gate = new Gate(db, cap, () => db.now),
     a = args();

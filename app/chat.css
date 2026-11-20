@@ -1456,7 +1456,7 @@ dialog .fine-print {
     gap: 6px;
   }
 }
-@media (max-height: 720px) and (min-width: 901px) {
+@media (max-height: 850px) and (min-width: 901px) {
   .app-shell {
     min-height: 0;
   }
@@ -1476,6 +1476,20 @@ dialog .fine-print {
   }
   .page-footer {
     min-height: 38px;
+  }
+}
+@media (max-height: 650px) and (min-width: 901px) {
+  .side-note h1 {
+    font-size: 2.2rem;
+    margin: 12px 0;
+  }
+  .quiet-garden,
+  .side-caption {
+    display: none;
+  }
+  .privacy-note {
+    margin-top: 16px;
+    padding-top: 14px;
   }
 }
 @media (max-height: 500px) {

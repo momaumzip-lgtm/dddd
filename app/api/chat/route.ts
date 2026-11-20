@@ -3,7 +3,8 @@ import { chatSchema, MAX_HISTORY_MESSAGES } from "@/lib/server/schemas";
 import { validateState, state } from "@/lib/server/session";
 import { limits, configured, chatModel } from "@/lib/server/config";
 import { json, failure, readJson } from "@/lib/server/http";
-import { Gate, RedisStore } from "@/lib/server/limits";
+import { Gate } from "@/lib/server/limits";
+import { DatabaseStore } from "@/lib/server/database";
 import { runChat } from "@/lib/server/chat";
 import { AppError } from "@/lib/server/errors";
 export const maxDuration = 60;
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
         message: p.message,
         summary: p.action === "summary",
       },
-      new Gate(new RedisStore(), c),
+      new Gate(new DatabaseStore(), c),
       new AI(chatModel(), c.output, { signal: req.signal }),
     );
     return json({

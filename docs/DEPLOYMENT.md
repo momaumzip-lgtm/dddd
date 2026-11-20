@@ -11,7 +11,7 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 
 ## 필수 설정
 
-최종 도메인은 `momaumzip.com`입니다. `www.momaumzip.com`은 기본 도메인으로 이동하도록 연결합니다. `netlify.toml`의 보안 검사 예외 목록은 화면·소스에 공개되는 운영 설정만 포함합니다. API 키, 세션 서명 키, Redis·이메일 인증 토큰은 예외에 포함하지 않습니다.
+최종 도메인은 `momaumzip.com`입니다. `www.momaumzip.com`은 기본 도메인으로 이동하도록 연결합니다. `netlify.toml`의 보안 검사 예외 목록은 화면·소스에 공개되는 운영 설정만 포함합니다. API 키, 세션 서명 키, DB 연결 문자열·이메일 인증 토큰은 예외에 포함하지 않습니다.
 
 | 변수                        | 값 또는 입력 기준                                                                          |
 | --------------------------- | ------------------------------------------------------------------------------------------ |
@@ -21,8 +21,6 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 | `SESSION_SECRET`            | 독립적으로 생성한 32자 이상의 난수. 서버 비밀 값                                           |
 | `OPENAI_API_KEY`            | 운영자가 직접 등록하는 기존 OpenAI API 키. 서버 비밀 값                                    |
 | `OPENAI_MODEL`              | `gpt-5-nano`                                                                               |
-| `UPSTASH_REDIS_REST_URL`    | Upstash Redis의 REST URL                                                                   |
-| `UPSTASH_REDIS_REST_TOKEN`  | 같은 Redis의 REST token. 서버 비밀 값                                                      |
 | `OPERATOR_NAME`             | maumzip                                                                                    |
 | `SUPPORT_CONTACT`           | 010-6675-9496                                                                              |
 | `TARGET_AGE_NOTICE`         | 20~40대 중심                                                                               |
@@ -31,6 +29,14 @@ Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기
 | `SURVEY_RETENTION_NOTICE`   | 운영자 메일함 설문 응답은 접수일부터 1년 보관 후 삭제. 발송 서비스의 보존 조건은 별도 확인 |
 
 실제 계정이나 계약 조건을 확인하지 않은 정책 값은 임의로 확정하지 않습니다. 운영 준비 확인은 `npm run release:check`로 실행합니다. 이 명령은 API 키의 유효성을 검증하지 않습니다.
+
+## 내장 DB
+
+`@netlify/database`가 설치되어 있어 Netlify가 배포 시 DB와 `NETLIFY_DB_URL`을 자동으로 준비합니다. 별도 Upstash 가입이나 Redis 토큰이 필요하지 않습니다. `netlify/database/migrations/`의 SQL이 게시 전에 적용되며, 실패하면 새 배포가 게시되지 않습니다.
+
+사용량·요청 식별자·revision만 저장합니다. 모든 판정은 기존 mutex 행 잠금을 잡은 단일 Postgres 트랜잭션에서 처리하며 AI·이메일 요청 중에는 잠금을 유지하지 않습니다. DB 장애·5초 내 확인 실패 시 과금 호출을 진행하지 않습니다. 만료값은 다음 요청에서 정리하고, DB 백업 보관 기간은 별도입니다.
+
+DB는 기존 Netlify 무료 플랜 크레딧을 사용합니다. 현재 공식 기준 compute는 시간당 단위 10크레딧, 대역폭은 GB당 20크레딧입니다. 무료 플랜은 비활성 5분 후 절전합니다. 사용량이 많으면 무료 크레딧이 먼저 소진될 수 있으므로 대시보드를 확인합니다. 이 프로젝트 설정에서 유료 플랜이나 자동 충전을 활성화하지 않았습니다. [Netlify DB 요금·제한](https://docs.netlify.com/build/data-and-storage/netlify-database/billing-and-usage/)
 
 ## 선택 설문 이메일
 

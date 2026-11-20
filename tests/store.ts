@@ -1,8 +1,9 @@
 import { createRequire } from "node:module";
 import type { Store } from "../lib/server/limits";
+import { referenceScripts } from "./gate-reference";
 const require = createRequire(import.meta.url);
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = require("fengari");
-// Runs the ACTUAL production Lua against an expiring Redis command double. No network or paid calls.
+// Independent admission specification, with a controllable clock. No network or paid calls.
 export class LuaStore implements Store {
   data = new Map<string, { value: string; until: number }>();
   now = Date.now();
@@ -56,7 +57,7 @@ export class LuaStore implements Store {
     });
     lua.lua_setfield(L, -2, to_luastring("call"));
     lua.lua_setglobal(L, to_luastring("redis"));
-    const status = lauxlib.luaL_dostring(L, to_luastring(script));
+    const status = lauxlib.luaL_dostring(L, to_luastring(referenceScripts[script]));
     if (status !== lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(L, -1)));
     const result = lua.lua_tonumber(L, -1);
     lua.lua_close(L);

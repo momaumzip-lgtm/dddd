@@ -2,52 +2,10 @@ import { AppError } from "./errors";
 export interface Store {
   eval(script: string, keys: string[], args: string[]): Promise<number>;
 }
-// All admission decisions and mutations execute in ONE Redis EVAL. No conversation content is stored.
-export const ADMIT = `
-if redis.call('EXISTS',KEYS[1])==1 then return 2 end
-if redis.call('EXISTS',KEYS[2])==1 then return 3 end
-local revision=tonumber(redis.call('GET',KEYS[6]) or '0')
-if revision~=tonumber(ARGV[4]) then return 4 end
-for i=3,5 do if tonumber(redis.call('GET',KEYS[i]) or '0')>=tonumber(ARGV[i-2]) then return 1 end end
-redis.call('SET',KEYS[1],ARGV[5],'EX',86400)
-redis.call('SET',KEYS[2],ARGV[5],'EX',180)
-for i=3,5 do redis.call('INCR',KEYS[i]); redis.call('EXPIRE',KEYS[i],i==3 and 65 or 90000) end
-return 0`;
-export const EXTRA = `
-if redis.call('GET',KEYS[1])~=ARGV[1] then return 3 end
-if tonumber(redis.call('GET',KEYS[2]) or '0')>=tonumber(ARGV[2]) then return 1 end
-redis.call('INCR',KEYS[2]); redis.call('EXPIRE',KEYS[2],90000); return 0`;
-export const FINISH = `
-if redis.call('GET',KEYS[1])~=ARGV[1] then return 3 end
-if ARGV[2]~='' then redis.call('SET',KEYS[2],ARGV[2],'EX',86400) end
-redis.call('DEL',KEYS[1]);return 0`;
-export class RedisStore implements Store {
-  async eval(script: string, keys: string[], args: string[]) {
-    if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN)
-      throw new AppError(503, "STORE", "사용량 확인을 준비 중이에요. 잠시 후 다시 시도해 주세요.");
-    try {
-      const response = await fetch(process.env.UPSTASH_REDIS_REST_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(["EVAL", script, keys.length, ...keys, ...args]),
-        signal: AbortSignal.timeout(5000),
-        cache: "no-store",
-      });
-      const data = (await response.json()) as { error?: unknown; result?: unknown };
-      if (!response.ok || data.error || typeof data.result !== "number") throw new Error();
-      return data.result;
-    } catch {
-      throw new AppError(
-        503,
-        "STORE",
-        "사용량을 확인하지 못했어요. 입력은 보존돼요. 잠시 후 다시 시도해 주세요.",
-      );
-    }
-  }
-}
+// Admission, counters and revisions commit together in one database transaction.
+export const ADMIT = "admit";
+export const EXTRA = "extra";
+export const FINISH = "finish";
 type Cap = { minute: number; day: number; global: number };
 export class Gate {
   constructor(

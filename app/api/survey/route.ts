@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { readJson, json, failure } from "@/lib/server/http";
 import { surveyRequestSchema } from "@/lib/survey";
 import { surveyIdentity, sendSurvey, SurveyGate } from "@/lib/server/survey";
-import { RedisStore } from "@/lib/server/limits";
+import { DatabaseStore } from "@/lib/server/database";
 import { AppError } from "@/lib/server/errors";
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
       p.conversationId,
       p.requestId,
       p.answers,
-      new SurveyGate(new RedisStore(), cap),
+      new SurveyGate(new DatabaseStore(), cap),
     );
     return json({ accepted: true });
   } catch (error) {

@@ -1,4 +1,5 @@
 import "server-only";
+import { databaseConfigured } from "./database";
 // Lowest listed text generation price checked 2026-11-20. Shutdown: 2026-12-11.
 // No automatic migration or more expensive model fallback; review before that date.
 export const DEFAULT_CHAT_MODEL = "gpt-5-nano";
@@ -26,7 +27,6 @@ export function configured() {
     process.env.SESSION_SECRET.length >= 32 &&
     process.env.APP_URL &&
     process.env.ALLOWED_ORIGIN &&
-    process.env.UPSTASH_REDIS_REST_URL &&
-    process.env.UPSTASH_REDIS_REST_TOKEN,
+    databaseConfigured(),
   );
 }

@@ -25,12 +25,13 @@ npm run build
 - `components/chat/`: 대화·일기·설문 화면 및 브랜드 그래픽
 - `lib/server/`: OpenAI 호출, 안전 검수, 세션 서명, 공유 한도, 이메일 전달
 - `lib/browser/`: 페이지 이탈·복원 시 입력 초기화
+- `netlify/database/migrations/`: 사용량·중복 방지용 Postgres 스키마와 트랜잭션
 - `tests/`: 서버·안전·세션·설문·SDK 회귀 검사
 - `docs/`: 배포, 환경변수, 인수인계, 검수 안내
 
 ## 배포와 운영
 
-Netlify는 `netlify.toml`을 읽고 표준 Next.js 빌드를 실행합니다. 서버 경로를 포함하므로 정적 폴더 업로드 방식으로 배포하지 않습니다.
+Netlify는 `netlify.toml`을 읽고 표준 Next.js 빌드를 실행합니다. 서버 경로를 포함하므로 정적 폴더 업로드 방식으로 배포하지 않습니다. Netlify 내장 DB가 자동 연결되며 별도 Redis 계정이 필요하지 않습니다. 운영 주소는 https://momaumzip.com 입니다.
 
 - [배포 및 환경변수](docs/DEPLOYMENT.md)
 - [운영·인수인계](docs/HANDOVER.md)

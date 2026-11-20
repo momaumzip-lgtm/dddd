@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 import { POST as session } from "../app/api/session/route";
 import { POST as chat } from "../app/api/chat/route";
 import { readJson } from "../lib/server/http";
-import { RedisStore } from "../lib/server/limits";
+import { DatabaseStore } from "../lib/server/database";
 import { newSession, state } from "../lib/server/session";
 import type { Message } from "../lib/config";
 const origin = "https://review.example.test";
@@ -137,8 +137,7 @@ test("context bound is explicit rather than silently truncating risk/history", a
   assert.equal(r.status, 409);
   assert.equal(((await r.json()) as { code: string }).code, "CONTEXT");
 });
-test("Redis adapter missing settings fails closed without leaking credentials", async () => {
-  delete process.env.UPSTASH_REDIS_REST_URL;
-  delete process.env.UPSTASH_REDIS_REST_TOKEN;
-  await assert.rejects(new RedisStore().eval("return 0", [], []), /준비 중/);
+test("database adapter missing settings fails closed without leaking credentials", async () => {
+  delete process.env.NETLIFY_DB_URL;
+  await assert.rejects(new DatabaseStore().eval("admit", [], []), /사용량을 확인하지 못/);
 });
