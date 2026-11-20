@@ -620,11 +620,11 @@ export default function Chat({ config }: { config: PublicConfig }) {
               <br />
               문의·삭제 요청: {config.contact || "문의처 확인 중"}
               <br />
-              이용 대상: {config.policy.targetAge || "공개 운영 전 확정 필요"}
+              이용 대상: {config.policy.targetAge || "이용 대상 안내 확인 중"}
             </p>
             <p className="fine-print">
-              아래 버튼은 안내를 확인했다는 뜻이에요. 개인정보 처리 동의를 대신하지 않아요.
-              운영정책상 별도 동의가 필요한 경우 공개 전에 구분해 마련해야 해요.
+              아래 버튼은 안내를 확인했다는 뜻이에요. 개인정보 처리 동의를 대신하지 않아요. 설문
+              이메일 전달에 대한 동의는 설문 화면에서 따로 선택할 수 있어요.
             </p>
             <button
               className="primary"
