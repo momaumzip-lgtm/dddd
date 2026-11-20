@@ -51,12 +51,33 @@ export function safetyReply(previous: Safety, current: Exclude<Safety, "normal">
 }
 export const wantsNoQuestions = (text: string) =>
   /그냥\s*들어|질문.{0,8}(싫|하지\s*마|말고|원하지)|그만할|끝낼|모르겠/.test(text);
+const questionEnding =
+  /(?:나요|까요|습니까|어때요|주실래요|줄래요|알려\s?주세요|말씀해\s?주세요|말해\s?주세요)[.。!?？！]*["”']?$/;
+const replySentences = (text: string) =>
+  text
+    .split(/(?<=[.!?。？！])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+// Small models sometimes put an interrogative in body and end it with a period.
+// Remove those misplaced questions before moderation/audit; never fabricate replacement content.
+export function normalizeReply(reply: Reply, noQuestions: boolean): Reply {
+  return {
+    ...reply,
+    body: replySentences(reply.body.trim())
+      .filter((s) => !questionEnding.test(s))
+      .join(" "),
+    question: noQuestions ? null : reply.question?.trim() || null,
+  };
+}
 export function replyFormatIssue(reply: Reply, noQuestions: boolean) {
   const text = [reply.body, reply.question].filter(Boolean).join(" ");
   const sentences = text.split(/(?<=[.!?。？！])\s+|\n+/).filter(Boolean);
   if (sentences.length > 4) return "sentence_count";
   if (text.length > 800) return "length";
-  if (/[?？]/.test(reply.body)) return "body_question";
+  if (!reply.body.trim()) return "empty_body";
+  if (/[?？]/.test(reply.body) || replySentences(reply.body).some((s) => questionEnding.test(s)))
+    return "body_question";
   if (
     reply.question &&
     (!/[?？]$/.test(reply.question) || (reply.question.match(/[?？]/g) || []).length !== 1)
