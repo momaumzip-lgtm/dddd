@@ -1,10 +1,8 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  BookOpen,
   Check,
   CircleHelp,
-  ClipboardList,
   LoaderCircle,
   MessageCircle,
   Plus,
@@ -33,7 +31,7 @@ const errorResponse = z.object({ error: z.string(), code: z.string().optional() 
 class VisibleError extends Error {}
 type Session = { conversationId: string; token: string };
 type Pending = { text: string; action: "chat" | "summary" | "continue"; messageId?: string };
-type Panel = "help" | "privacy" | "diary" | "reset" | "survey" | "emotion" | null;
+type Panel = "help" | "privacy" | "reset" | "survey" | "emotion" | null;
 export default function Chat({ config }: { config: PublicConfig }) {
   const [started, setStarted] = useState(false),
     [emotion, setEmotion] = useState<EmotionSelection | null>(null),
@@ -63,9 +61,6 @@ export default function Chat({ config }: { config: PublicConfig }) {
     [acknowledged, setAcknowledged] = useState(false),
     [help, setHelp] = useState(false),
     [unread, setUnread] = useState(false);
-  const [diary, setDiary] = useState(
-    "오늘 나는 ___한 상황에서 ___라고 생각했고, 사실은 ___가 필요했음을 알아차렸다.",
-  );
   const [surveyEpoch, setSurveyEpoch] = useState(0),
     [surveyInvite, setSurveyInvite] = useState(false);
   const [conversationLimit, setConversationLimit] = useState(false);
@@ -99,7 +94,6 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setError("");
     setHelp(false);
     setUnread(false);
-    setDiary("오늘 나는 ___한 상황에서 ___라고 생각했고, 사실은 ___가 필요했음을 알아차렸다.");
     setSurveyEpoch((e) => e + 1);
     setSurveyInvite(false);
     setConversationLimit(false);
@@ -217,6 +211,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
             }
           }
         });
+        if (epoch !== generation.current) return;
         if (data.conversationId !== active.conversationId)
           throw new VisibleError(
             "대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.",
@@ -255,10 +250,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
       setStatus("idle");
       setHelp(data.help);
       setConversationLimit(data.conversationLimit === true);
-      if (data.completed) {
-        setDiary(data.text);
-        if (!data.notice && !data.help) setSurveyInvite(true);
-      }
+      setSurveyInvite(data.surveyReady && !data.help);
       if (data.notice) setError("안전 검수를 마치지 못해 대체 안내를 표시했어요.");
     } catch (e) {
       if (epoch !== generation.current) return;
@@ -280,13 +272,6 @@ export default function Chat({ config }: { config: PublicConfig }) {
       }
     }
   }
-  const summary = () => {
-    setPanel(null);
-    void send({
-      text: "지금까지 이야기한 내용을 정리해 주세요.",
-      action: "summary",
-    });
-  };
   return (
     <main ref={shell} className="app-shell">
       <header className="topbar">
@@ -372,13 +357,15 @@ export default function Chat({ config }: { config: PublicConfig }) {
               <div className="current-emotion">
                 <span>
                   {emotion ? emotionLabel(emotion) : "미정"} ·{" "}
-                  {intensityBands.find((b) => b.id === emotion?.intensityBand)?.label ||
-                    "강도 미정"}
+                  {emotion?.intensityBand === "unknown"
+                    ? "강도 미정"
+                    : intensityBands.find((b) => b.id === emotion?.intensityBand)?.label ||
+                      "강도 미정"}
                 </span>
                 <button onClick={() => setPanel("emotion")}>바꾸기</button>
                 <small>
                   {complete
-                    ? "오늘의 정리"
+                    ? "대화 마침"
                     : help
                       ? "안전 확인"
                       : "짧은 대화 · " + Math.min(turns + 1, 3) + " / 3"}
@@ -417,33 +404,28 @@ export default function Chat({ config }: { config: PublicConfig }) {
                 {(!config.ready || config.development) && (
                   <p className="setup-note" role="status">
                     {!config.ready
-                      ? "AI 연결을 준비 중이에요. 도움 받기와 일기 틀을 이용할 수 있어요."
+                      ? "AI 연결을 준비 중이에요. 도움 받기를 이용할 수 있어요."
                       : "현재 시범 운영 중이에요. 이용·개인정보 안내를 확인해 주세요."}
                   </p>
                 )}
-                {history.map((message, i) =>
-                  complete &&
-                  !help &&
-                  i === history.length - 1 &&
-                  message.role === "assistant" ? null : (
-                    <div key={i} className={`message ${message.role}`}>
+                {history.map((message, i) => (
+                  <div key={i} className={`message ${message.role}`}>
+                    {message.role === "assistant" && (
+                      <span className="avatar" aria-hidden="true">
+                        <BrandMark />
+                      </span>
+                    )}
+                    <div>
                       {message.role === "assistant" && (
-                        <span className="avatar" aria-hidden="true">
-                          <BrandMark />
+                        <span className="sender">
+                          {config.name}
+                          <span>AI</span>
                         </span>
                       )}
-                      <div>
-                        {message.role === "assistant" && (
-                          <span className="sender">
-                            {config.name}
-                            <span>AI</span>
-                          </span>
-                        )}
-                        <p className="bubble">{message.content}</p>
-                      </div>
+                      <p className="bubble">{message.content}</p>
                     </div>
-                  ),
-                )}
+                  </div>
+                ))}
                 {pending && (
                   <div className="message user">
                     <p className="bubble">{pending.text}</p>
@@ -491,39 +473,41 @@ export default function Chat({ config }: { config: PublicConfig }) {
                     </p>
                     <p>
                       {sessionInvalid
-                        ? "연결 중단이나 만료로 대화 상태를 확인하지 못했어요. 필요한 내용은 일기 틀에 직접 정리한 뒤 새 대화를 시작해 주세요."
-                        : "대화 길이에 도달했어요. 일기 틀에 직접 정리하거나 새 대화를 시작해 주세요."}
+                        ? "연결 중단이나 만료로 대화 상태를 확인하지 못했어요. 필요한 내용은 이 화면에서 확인할 수 있어요. 새 대화는 직접 선택해 주세요."
+                        : "대화 길이에 도달했어요. 필요한 내용은 이 화면에서 확인할 수 있어요. 새 대화는 직접 선택해 주세요."}
                     </p>
                     <div>
-                      <button onClick={() => setPanel("diary")}>일기 틀 열기</button>
                       <button onClick={() => setPanel("reset")}>새 대화 시작</button>
                     </div>
                   </div>
                 )}
                 {complete && !help && (
-                  <section className="completion-card" aria-label="오늘의 정리">
-                    <span className="eyebrow">나를 알아가는 시간</span>
-                    <h2>오늘의 정리</h2>
-                    <p>{diary}</p>
-                    <button
-                      className="primary"
-                      onClick={() => {
-                        setComplete(false);
-                        setTurns(0);
-                        continueRef.current = true;
-                        setSurveyInvite(false);
-                        input.current?.focus();
-                      }}
-                    >
-                      이어서 이야기하기
-                    </button>
-                  </section>
+                  <button
+                    className="continue-chat secondary"
+                    onClick={() => {
+                      setComplete(false);
+                      setTurns(0);
+                      continueRef.current = true;
+                      setSurveyInvite(false);
+                      requestAnimationFrame(() => input.current?.focus());
+                    }}
+                  >
+                    이어서 이야기하기
+                  </button>
                 )}
                 {surveyInvite && !help && (
                   <div className="survey-invite">
                     <span className="eyebrow">오늘의 대화를 마무리하며</span>
-                    <p>이 시간이 어떠셨는지 들려주실래요?</p>
-                    <button onClick={() => setPanel("survey")}>짧은 사용 경험 설문</button>
+                    <p>이번 대화는 어떠셨나요?</p>
+                    <a
+                      href="#survey"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        setPanel("survey");
+                      }}
+                    >
+                      설문조사 참여하기
+                    </a>
                     <small>선택 참여 · 채팅 내용은 보내지 않아요</small>
                   </div>
                 )}
@@ -534,26 +518,6 @@ export default function Chat({ config }: { config: PublicConfig }) {
                 </button>
               )}
               <footer className="composer" hidden={complete}>
-                <div className="composer-actions">
-                  <button
-                    className="diary-button"
-                    disabled={status === "waiting" || !history.length}
-                    onClick={summary}
-                  >
-                    <BookOpen size={16} />
-                    지금 정리하기
-                  </button>
-                  {!help && (
-                    <button
-                      className="survey-button"
-                      disabled={status === "waiting"}
-                      onClick={() => setPanel("survey")}
-                    >
-                      <ClipboardList size={16} />
-                      마무리 설문
-                    </button>
-                  )}
-                </div>
                 <form
                   autoComplete="off"
                   onSubmit={(e) => {
@@ -759,36 +723,6 @@ export default function Chat({ config }: { config: PublicConfig }) {
               <Check size={18} />
               안내 확인했어요
             </button>
-          </>
-        )}
-        {panel === "diary" && (
-          <>
-            <h2 id="panel-title">오늘 알아차린 마음</h2>
-            <p>
-              맞는 말보다, 나에게 솔직한 한 줄이면 충분해요. 정리에서 확인하지 못한 내용은 빈칸으로
-              남겨요. 떠오를 때 직접 채워도 괜찮아요.
-            </p>
-            <label htmlFor="diary" className="sr-only">
-              오늘의 깨달음 일기
-            </label>
-            <textarea
-              id="diary"
-              autoComplete="off"
-              className="diary-field"
-              rows={6}
-              value={diary}
-              onChange={(e) => setDiary(e.target.value)}
-              maxLength={2400}
-            />
-            <p className="fine-print">
-              이 화면의 메모리에만 머물러요. 새로고침·새 대화·페이지 이동 시 지워져요.
-            </p>
-            {history.length > 0 && !conversationLimit && !sessionInvalid && (
-              <button className="primary" onClick={summary} disabled={status === "waiting"}>
-                <MessageCircle size={18} />
-                내가 말한 내용으로 정리하기
-              </button>
-            )}
           </>
         )}
         {panel === "reset" && (

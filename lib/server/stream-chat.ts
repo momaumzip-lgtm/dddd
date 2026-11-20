@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Message } from "../config";
-import { freshProgress, responsePlan, type Progress } from "../conversation";
+import { JOURNAL_CLOSING, freshProgress, responsePlan, type Progress } from "../conversation";
 import { correctedSelection, selectionContext, type EmotionSelection } from "../emotions";
 import { AppError } from "./errors";
 import type { Gate } from "./limits";
@@ -214,12 +214,15 @@ export async function runStreamingChat(
             questions: Math.min(2, plan.current.questions + questions),
             completed: mode !== "continue" || plan.forceComplete,
           };
+    const surveyReady = progress.completed && mode === "complete" && safety === "normal";
+    if (surveyReady) publish("\n\n" + JOURNAL_CLOSING);
     progress.messageIds = [...(args.progress.messageIds || []), messageId];
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");
     await slot.stage(args.revision + 1);
     committed = true;
     return {
       body,
+      surveyReady,
       history: [...messages, { role: "assistant" as const, content: body }],
       safety,
       progress,

@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
               notice: false,
               help: result.safety !== "normal",
               completed: result.progress.completed,
+              surveyReady: result.surveyReady,
               turns: result.progress.turns,
               questions: result.progress.questions,
               emotion: result.emotion,

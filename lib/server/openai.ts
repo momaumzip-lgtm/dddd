@@ -219,21 +219,31 @@ export class AI {
     onSentence: (sentence: string, header: { mode: string; safety: string }) => Promise<void>,
   ) {
     return this.request(async (signal) => {
-      const schema = context.forceComplete
-        ? streamReplySchema.extend({
-            mode: z.enum(["complete", "safety", "refusal"]),
-            sentences: z
-              .array(
-                z
-                  .string()
-                  .min(1)
-                  .max(1200)
-                  .regex(/^[^?？؟﹖]*$/),
-              )
+      const complete = streamReplySchema.extend({
+        mode: z.literal("complete"),
+        sentences: z
+          .array(
+            z
+              .string()
               .min(1)
-              .max(6),
-          })
-        : streamReplySchema;
+              .max(600)
+              .regex(/^[^?？؟﹖\n]*$/),
+          )
+          .length(1),
+      });
+      const safety = streamReplySchema.extend({ mode: z.literal("safety") });
+      const refusal = streamReplySchema.extend({ mode: z.literal("refusal") });
+      const ongoing = streamReplySchema.extend({
+        mode: z.literal("continue"),
+        sentences: z.array(z.string().min(1).max(600)).min(1).max(2),
+      });
+      const schema = z
+        .object({
+          reply: context.forceComplete
+            ? z.discriminatedUnion("mode", [complete, safety, refusal])
+            : z.discriminatedUnion("mode", [ongoing, complete, safety, refusal]),
+        })
+        .strict();
       const stream = await this.client.responses.create(
         {
           model: this.model,
@@ -250,7 +260,7 @@ export class AI {
             BRIEF_PROMPT +
             "\n" +
             (context.forceComplete
-              ? "이번 답변은 질문 없는 마무리입니다. 질문·답변 요청·더 적어 달라는 부탁·다음에 설명하라는 말 없이, 이미 들은 내용으로 끝내세요."
+              ? "이번 답변은 질문 없는 한 줄 요약입니다. 이미 들은 상황과 정리된 생각을 문장 하나로만 요약하세요. 질문·추가 설명 요청·인사·다이어리 안내는 쓰지 마세요. 다이어리 안내는 서버가 붙입니다."
               : "이번 답변은 필요한 질문 딱 하나만 하거나, 충분히 알면 곧바로 마무리하세요.") +
             (context.listening
               ? " 사용자는 조언을 원하지 않습니다. 행동 권유나 질문 없이 이해한 내용만 반영하세요."
@@ -280,7 +290,7 @@ export class AI {
             event.response.incomplete_details
           )
             throw new AppError(502, "INCOMPLETE", "답변을 완성하지 못했어요.");
-          final = schema.parse(JSON.parse(raw));
+          final = schema.parse(JSON.parse(raw)).reply;
           completed = true;
           console.info("chat_usage", {
             requestId: this.requestId,

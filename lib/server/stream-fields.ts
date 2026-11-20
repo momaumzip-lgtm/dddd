@@ -43,6 +43,8 @@ export class ReplyFields {
       } else if (c === '"') {
         this.quoted = true;
         this.token = '"';
+      } else if (c === "{" && this.key === "reply") {
+        this.expectingKey = true;
       } else if (c === "[") {
         if (this.key !== "sentences" || !this.mode || !this.safety)
           throw new Error("Missing response header");

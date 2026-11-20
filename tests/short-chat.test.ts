@@ -214,6 +214,7 @@ test("fragmented JSON fields handle escaped quotes, Korean, emoji and enforce he
   let texts: string[] = [];
   for (const c of JSON.stringify(object)) texts.push(...fields.push(c));
   assert.deepEqual(texts, object.sentences);
+  assert.deepEqual(new ReplyFields().push(JSON.stringify({ reply: object })), object.sentences);
   assert.equal(fields.mode, "complete");
   assert.throws(() => new ReplyFields().push('{"sentences":["나쁜 순서"]}'));
 });
@@ -299,7 +300,7 @@ test("production SDK streams actual text fields before completion without routin
   const transport: typeof fetch = async (url, init) => {
     calls.push(JSON.parse(String(init?.body)));
     const events = [
-      ...Array.from(JSON.stringify(object)).map((delta) => ({
+      ...Array.from(JSON.stringify({ reply: object })).map((delta) => ({
         type: "response.output_text.delta",
         delta,
       })),
@@ -489,4 +490,98 @@ test("lost final packet and lost acknowledgement recover using metadata without 
   );
   assert.equal(next.progress.turns, 2);
   assert.ok([...db.data.values()].every((v) => !v.value.includes("수정 요청")));
+});
+import { JOURNAL_CLOSING } from "../lib/conversation";
+test("normal completion appends the exact journal closing and offers survey after the summary", async () => {
+  const r = await runStreamingChat(
+    { ...args(), action: "summary", message: "정리해 주세요." },
+    new Gate(new LuaStore(), cap),
+    provider("complete").ai,
+    () => {},
+  );
+  assert.equal(r.progress.completed, true);
+  assert.equal(r.surveyReady, true);
+  assert.ok(r.body.endsWith(JOURNAL_CLOSING));
+  assert.equal(r.body.split(JOURNAL_CLOSING).length, 2);
+  const safety = await runStreamingChat(
+    { ...args(), message: "지금 약을 과다로 먹었어요." },
+    new Gate(new LuaStore(), cap),
+    provider().ai,
+    () => {},
+  );
+  assert.equal(safety.surveyReady, false);
+  assert.ok(!safety.body.includes(JOURNAL_CLOSING));
+});
+import { NextRequest } from "next/server";
+import { POST as acknowledgePost } from "../app/api/chat/ack/route";
+test("receipt endpoint rejects missing identity, another session, invalid fields and wrong Origin", async () => {
+  process.env.SESSION_SECRET = "test-only-secret-at-least-32-characters";
+  process.env.APP_URL = process.env.ALLOWED_ORIGIN = "https://review.example.test";
+  const s = await newSession(),
+    other = await newSession();
+  const token = await state(
+    s.sid,
+    s.cid,
+    [],
+    "normal",
+    "end",
+    1,
+    { turns: 1, questions: 0, completed: true },
+    id(),
+  );
+  const call = (body: unknown, cookie?: string, origin = "https://review.example.test") =>
+    acknowledgePost(
+      new NextRequest("https://review.example.test/api/chat/ack", {
+        method: "POST",
+        headers: {
+          Origin: origin,
+          "Content-Type": "application/json",
+          ...(cookie ? { Cookie: "maeum_session=" + cookie } : {}),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  const body = { conversationId: s.cid, token };
+  assert.equal((await call(body)).status, 401);
+  assert.equal((await call(body, other.cookie)).status, 409);
+  assert.equal((await call(body, s.cookie, "https://evil.example.test")).status, 403);
+  assert.equal((await call({ ...body, conversationId: "invalid" }, s.cookie)).status, 400);
+});
+test("production response schema accepts a one-line completion and rejects a multi-line completion", async () => {
+  process.env.OPENAI_API_KEY = "offline-http-stream-test";
+  for (const sentences of [
+    ["핵심 생각을 간단히 정리했어요."],
+    ["핵심 생각을 정리했어요.", "추가 문장이에요."],
+  ]) {
+    const wire = JSON.stringify({ reply: { mode: "complete", safety: "normal", sentences } });
+    const ai = new AI("gpt-6-luna", 1000, {
+      fetch: async () =>
+        new Response(
+          [
+            { type: "response.output_text.delta", delta: wire },
+            {
+              type: "response.completed",
+              response: { status: "completed", error: null, incomplete_details: null },
+            },
+          ]
+            .map((e) => "data: " + JSON.stringify(e) + "\n\n")
+            .join("") + "data: [DONE]\n\n",
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+    });
+    const result = ai.streamReply(
+      [{ role: "user", content: "정리해 주세요." }],
+      {
+        emotion: selectionContext(emotion),
+        forceComplete: true,
+        listening: false,
+        remainingQuestions: 0,
+        turn: 3,
+        previousSafety: "normal",
+      },
+      async () => {},
+    );
+    if (sentences.length === 1) assert.equal((await result).sentences.length, 1);
+    else await assert.rejects(result);
+  }
 });

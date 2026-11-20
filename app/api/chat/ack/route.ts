@@ -11,7 +11,9 @@ const schema = z
   .strict();
 export async function POST(req: NextRequest) {
   try {
-    const p = schema.parse(await readJson(req, 6000)),
+    const parsed = schema.safeParse(await readJson(req, 6000));
+    if (!parsed.success) throw new AppError(400, "INPUT", "접수 확인 형식을 확인해 주세요.");
+    const p = parsed.data,
       cookie = req.cookies.get("maeum_session")?.value;
     if (!cookie)
       throw new AppError(

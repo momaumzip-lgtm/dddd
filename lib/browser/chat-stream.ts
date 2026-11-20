@@ -7,6 +7,7 @@ export const completedChatSchema = z.object({
   notice: z.boolean(),
   help: z.boolean(),
   completed: z.boolean(),
+  surveyReady: z.boolean().optional().default(false),
   turns: z.number(),
   questions: z.number(),
   emotion: z.object({

@@ -47,3 +47,6 @@ export function responsePlan(
     remainingQuestions: Math.max(0, 2 - current.questions),
   };
 }
+
+export const JOURNAL_CLOSING =
+  "대화로 정리된 생각을 내 것으로 만드는 마지막 단계예요. 펜을 들어 오늘의 핵심 깨달음을 다이어리에 기록해 보세요";

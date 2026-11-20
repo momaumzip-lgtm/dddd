@@ -1748,3 +1748,21 @@ dialog .fine-print {
     gap: 8px;
   }
 }
+
+.message.assistant .bubble {
+  white-space: pre-line;
+}
+.continue-chat {
+  margin: 8px 0 16px 42px;
+}
+.survey-invite a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  border: 1px solid #c4d5c2;
+  background: white;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-weight: 600;
+  text-underline-offset: 4px;
+}
