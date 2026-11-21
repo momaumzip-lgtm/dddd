@@ -178,7 +178,7 @@ test("only an explicit ending closes the conversation; an offered synthesis keep
     assert.equal(r.progress.completed, true);
     assert.ok(!r.body.includes("?"));
   }
-  const early = await runStreamingChat(
+  const early = runStreamingChat(
     {
       ...args(),
       progress: { turns: 1, questions: 1, completed: false },
@@ -191,8 +191,7 @@ test("only an explicit ending closes the conversation; an offered synthesis keep
     provider("complete").ai,
     () => {},
   );
-  assert.equal(early.progress.completed, false);
-  assert.equal(early.surveyReady, false);
+  await assert.rejects(early, /정리에 담을 내용/);
   assert.equal(
     responsePlan({ turns: 1, questions: 1, completed: false }, "chat", "응", []).forceComplete,
     false,
@@ -428,7 +427,11 @@ test("question inside a closing summary is blocked and the old history and signe
     await publish("왜 그런가요?", { mode: "complete", safety: "normal" });
     return { mode: "complete", safety: "normal", sentences: ["왜 그런가요?"] };
   };
-  const a = { ...args(), progress: { turns: 2, questions: 2, completed: false } };
+  const a = {
+    ...args(),
+    action: "summary",
+    progress: { turns: 2, questions: 2, completed: false },
+  };
   let emitted = "";
   await assert.rejects(
     runStreamingChat(a, new Gate(new LuaStore(), cap), p.ai, (t) => (emitted += t)),
@@ -816,7 +819,7 @@ test("ordinary first disclosures need a question, including advice-only and diar
   assert.equal(result.surveyReady, false);
   assert.equal(result.progress.questions, 1);
 });
-test("a compound question removed from an opening still leaves exactly one answerable question", async () => {
+test("a malformed opening is retryable without inventing a generic question", async () => {
   const p = provider();
   p.ai.streamReply = async (_i, _c, emit) => {
     const reply = {
@@ -828,11 +831,10 @@ test("a compound question removed from an opening still leaves exactly one answe
       await emit(text, { mode: reply.mode, safety: reply.safety });
     return reply;
   };
-  const result = await runStreamingChat(args(), new Gate(new LuaStore(), cap), p.ai, () => {});
-  assert.equal(result.progress.questions, 1);
-  assert.match(result.body, /^그 말이 마음에 남았군요\..+\?$/);
-  assert.doesNotMatch(result.body, /무엇을 기대/);
-  assert.equal(result.surveyReady, false);
+  await assert.rejects(
+    runStreamingChat(args(), new Gate(new LuaStore(), cap), p.ai, () => {}),
+    /첫 질문/,
+  );
 });
 test("the opening SDK contract streams reflection before its required question and excludes closing modes", async () => {
   process.env.OPENAI_API_KEY = "offline-http-stream-test";
@@ -914,7 +916,7 @@ test("a spontaneous diary can be edited while the next message uses the same ope
     history: first.history,
     revision: first.revision,
     rid: id(),
-    message: "일정을 미리 알려줬으면 했어요.",
+    message: "일정을 미리 알려줬으면 했어요. 다음에는 내가 먼저 시간을 확인할래요.",
   };
   const model = provider().ai;
   model.streamReply = async (_m, _c, emit) => {
@@ -926,13 +928,14 @@ test("a spontaneous diary can be edited while the next message uses the same ope
       sentences: [sentence],
       diaryDraft: "나는 일정을 미리 알고 싶었다.",
       sourceQuote: "미리 알려줬으면",
+      perspectiveQuote: "내가 먼저 시간을 확인할래요",
     };
   };
   const offered = await runStreamingChat(second, gate, model, () => {});
   assert.ok(offered.diaryDraft);
   assert.ok(offered.body.endsWith(DIARY_INVITATION));
   assert.equal(offered.progress.completed, false);
-  assert.equal(offered.surveyReady, false);
+  assert.equal(offered.surveyReady, true);
   await gate.acknowledge(base.sid, base.cid, second.rid, offered.revision);
   const next = await runStreamingChat(
     {
@@ -949,4 +952,20 @@ test("a spontaneous diary can be edited while the next message uses the same ope
   );
   assert.equal(next.progress.turns, 3);
   assert.equal(next.progress.completed, false);
+});
+
+test("immediate endings and ordinary reluctance are separate intentions", () => {
+  for (const value of [
+    "바로 끝내줘",
+    "이유는 아직 모르겠고 오늘은 여기까지 할래요",
+    "대화를 끝내 주세요.",
+  ])
+    assert.equal(responsePlan(freshProgress, "chat", value, []).forceComplete, true);
+  for (const value of [
+    "끝내고 싶지 않아요",
+    "조언은 싫어요",
+    "기록은 거절할게요",
+    "더 이야기하고 싶어요",
+  ])
+    assert.equal(responsePlan(freshProgress, "chat", value, []).forceComplete, false);
 });

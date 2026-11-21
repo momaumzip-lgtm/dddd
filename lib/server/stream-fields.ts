@@ -7,6 +7,7 @@ export class ReplyFields {
   private key = "";
   private expectingKey = true;
   private inSentences = false;
+  hasSentenceText = false;
   mode = "";
   safety = "";
   sentences: string[] = [];
@@ -15,6 +16,7 @@ export class ReplyFields {
     const ready: string[] = [];
     for (const c of delta) {
       if (this.quoted) {
+        if (this.inSentences && c.trim() && c !== '"' && c !== "\\") this.hasSentenceText = true;
         this.token += c;
         if (this.escaped) {
           this.escaped = false;
@@ -42,7 +44,11 @@ export class ReplyFields {
                 throw new Error("Missing opening reflection");
               this.sentences.push(value);
               ready.push(value);
-            } else if (this.key !== "diaryDraft" && this.key !== "sourceQuote")
+            } else if (
+              this.key !== "diaryDraft" &&
+              this.key !== "sourceQuote" &&
+              this.key !== "perspectiveQuote"
+            )
               throw new Error("Unknown response field");
           }
         }

@@ -60,11 +60,14 @@ export default function EmotionPicker({
             단어를 골라주세요
           </>
         ) : (
-          "얼마나 크게 느껴지나요?"
+          "그 일을 지금 떠올렸을 때, 이 감정이 얼마나 크게 느껴지나요?"
         )}
       </h1>
       {expanded && (
-        <p>AI와 짧게 이야기하고 내 마음을 한두 문장으로 남겨보세요. 대화는 보통 3분 정도예요.</p>
+        <p>
+          AI와 짧게 이야기하고 내 마음을 한두 문장으로 남겨보세요. 대화는 약 3~5분을 생각하고 시작해
+          보세요.
+        </p>
       )}
       {chosen && !expanded ? (
         <div className="selection-card">
@@ -175,7 +178,7 @@ export default function EmotionPicker({
       {chosen && !expanded && (
         <fieldset className="intensity-picker" ref={intensity} tabIndex={-1}>
           <legend className="sr-only">감정 강도 고르기</legend>
-          <p>정확한 수치가 아니어도 괜찮아요. 지금 느껴지는 정도를 골라주세요.</p>
+          <p>정답은 없어요. 지금 느끼는 정도로 골라주세요.</p>
           <div className="intensity-options">
             {intensityBands.map((b) => (
               <button

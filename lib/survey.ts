@@ -88,7 +88,13 @@ export const surveyQuestions: Question[] = [
   {
     key: "organizationHelpfulness",
     label: "감정과 생각을 정리하는 데 도움이 되었나요?",
-    scale: agree,
+    scale: [
+      "전혀 도움이 되지 않았어요",
+      "별로 도움이 되지 않았어요",
+      "보통이에요",
+      "도움이 되었어요",
+      "매우 도움이 되었어요",
+    ],
   },
   {
     key: "judgmentOrAwkwardness",
@@ -114,7 +120,13 @@ export const surveyQuestions: Question[] = [
   {
     key: "recommendationIntent",
     label: "이 AI 대화를 주변 지인에게 추천하고 싶나요?",
-    scale: agree,
+    scale: [
+      "전혀 추천하고 싶지 않아요",
+      "별로 추천하고 싶지 않아요",
+      "보통이에요",
+      "추천하고 싶어요",
+      "매우 추천하고 싶어요",
+    ],
   },
   { key: "improvementSuggestions", label: "더 나아졌으면 하는 점이 있다면 편하게 적어주세요." },
   {

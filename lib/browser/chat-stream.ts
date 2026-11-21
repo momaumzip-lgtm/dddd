@@ -61,9 +61,14 @@ export async function readChatStream(
   let buffer = "",
     text = "",
     done: z.infer<typeof completedChatSchema> | undefined;
+  let firstByte = true;
   try {
     while (true) {
       const item = await reader.read();
+      if (firstByte && item.value?.length) {
+        performance.mark("chat-byte:" + requestId);
+        firstByte = false;
+      }
       buffer += decoder.decode(item.value, { stream: !item.done });
       if (buffer.length > 150000) throw new ChatDisplayError("답변이 너무 길어요.");
       let at: number;

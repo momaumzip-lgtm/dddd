@@ -7,7 +7,7 @@
 3. Project configuration의 Environment variables에서 아래 값을 등록합니다. API 비밀 값은 Functions에서 사용할 수 있어야 합니다.
 4. 환경변수를 변경한 뒤 새 배포를 실행합니다. 기존 배포에는 변경 값이 바로 적용되지 않습니다.
 
-Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기나 SPA 전체 경로 리다이렉트를 추가하지 않습니다. API와 페이지 렌더링은 서버 함수로 실행됩니다. 함수의 60초 제한을 고려해 AI 작업 전체는 45초, 개별 호출은 본문 수신·파싱을 포함해 12초로 제한합니다.
+Netlify가 Next.js 어댑터를 자동 적용합니다. 정적 HTML 내보내기나 SPA 전체 경로 리다이렉트를 추가하지 않습니다. API와 페이지 렌더링은 서버 함수로 실행됩니다. 함수의 60초 제한을 고려해 AI 작업 전체는 30초, 개별 호출은 본문 수신·파싱을 포함해 12초로 제한합니다.
 
 ## 필수 설정
 
@@ -58,7 +58,7 @@ Forms는 공개 접수 기능이므로 직접 POST에는 앱 API의 서명·한�
 
 현재 운영 모델은 `gpt-6-luna`, Standard 처리, `reasoning.effort: none`, SDK 자동 재시도 0회입니다. 2026-11-21 확인 모델 문서 기준 100만 토큰당 입력 $0.10, 출력 $0.50입니다. gpt-5-nano minimal·low와 gpt-5.4-nano를 합성 사례로 비교했으며, 저렴해도 정리 모드에서 질문하거나 정정을 놓친 구성은 채택하지 않았습니다. 실제 계정에서 검수한 후보 중 품질 기준을 통과한 저비용 구성을 선택했습니다. 더 비싼 모델로 자동 전환하지 않습니다.
 
-현재 UI의 스트리밍 일반 대화는 입력 moderation, 유료 생성 1회, 문장별 누적 출력 moderation을 거칩니다. 입력이 flagged이거나 안전 확인 상태이면 별도 맥락 분류가 추가될 수 있습니다. 과거 배포에서 열린 클라이언트의 JSON 호환 경로는 이전 분류·생성·검수 경로를 유지합니다. 실제 비용은 토큰 합계에 따라 달라지므로 호출 수 감소를 고정된 비용 절감률로 해석하지 않습니다. 응답 길이는 목표로 유도하며, 길이 때문에 재생성하지 않습니다. 12초 호출·45초 전체 예산과 기존 공유 한도를 유지합니다. 자세한 흐름은 `docs/CONVERSATION.md`에 있습니다.
+현재 UI의 스트리밍 일반 대화는 입력 moderation, 유료 생성 1회, 문장별 누적 출력 moderation을 거칩니다. 입력이 flagged이거나 안전 확인 상태이면 별도 맥락 분류가 추가될 수 있습니다. 과거 배포에서 열린 클라이언트의 JSON 호환 경로는 이전 분류·생성·검수 경로를 유지합니다. 실제 비용은 토큰 합계에 따라 달라지므로 호출 수 감소를 고정된 비용 절감률로 해석하지 않습니다. 응답 길이는 목표로 유도하며, 길이 때문에 재생성하지 않습니다. 12초 호출·30초 전체 예산과 기존 공유 한도를 유지합니다. 자세한 흐름은 `docs/CONVERSATION.md`에 있습니다.
 
 공식 참고: [Netlify Next.js](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/), [함수 실행 제한](https://docs.netlify.com/build/functions/configuration/), [모델 정보](https://developers.openai.com/api/docs/models/gpt-6-luna), [모델 종료 일정](https://developers.openai.com/api/docs/deprecations).
 

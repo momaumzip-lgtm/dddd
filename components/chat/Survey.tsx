@@ -127,7 +127,7 @@ export default function Survey({
         </>
       ) : (
         <>
-          <span className="survey-badge">선택 참여 · 사용 경험 설문</span>
+          <span className="survey-badge">선택 참여 · 설문 약 1~2분</span>
           <h2 id="survey-title">
             마지막으로,
             <br />

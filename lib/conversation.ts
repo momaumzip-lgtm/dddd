@@ -10,7 +10,7 @@ export const progressSchema = z
 export type Progress = z.infer<typeof progressSchema>;
 export const freshProgress: Progress = { turns: 0, questions: 0, completed: false };
 export const wantsFinish = (text: string) =>
-  /(?:^|[.!?]\s*|(?:대화는?|대화를)\s+)(?:(?:지금|이제|오늘은|그냥)\s*)*(?:정리해\s*(?:줘|주세요)?|그만할(?:래|게)(?:요)?|끝내자|마무리(?:할게요?|해\s*(?:줘|주세요))|여기까지(?:\s*할(?:래|게)요?)?)[.!\s]*$/.test(
+  /(?:^|[,.!?]\s*|\s+(?=오늘은|이제|여기까지)|(?:대화는?|대화를)\s+)(?:(?:지금|이제|오늘은|그냥|바로)\s*)*(?:정리해\s*(?:줘|주세요)?|그만할(?:래|게)(?:요)?|끝내(?:자|\s*(?:줘|주세요))|마무리(?:할게요?|해\s*(?:줘|주세요))|여기까지(?:\s*할(?:래|게)요?)?)[.!\s]*$/.test(
     text.trim(),
   );
 export const wantsListening = (text: string) =>
@@ -36,7 +36,7 @@ export function responsePlan(
     )
       listening = false;
     const declinesDiary =
-      /(?:기록|일기|다이어리|초안).{0,10}(?:안\s*(?:할|쓸|하고|쓰고)|싫|하지\s*마|원하지|필요\s*없|(?:하고|쓰고|남기고)\s*싶지)/.test(
+      /(?:기록|일기|다이어리|초안).{0,10}(?:안\s*(?:할|쓸|하고|쓰고)|싫|거절|하지\s*마|원하지|필요\s*없|(?:하고|쓰고|남기고)\s*싶지)/.test(
         text,
       );
     const requestsDiary =

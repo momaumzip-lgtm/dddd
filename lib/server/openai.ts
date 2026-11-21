@@ -13,7 +13,7 @@ const moderationSchema = z.object({
   flagged: z.boolean(),
   categories: z.record(z.string(), z.boolean()),
 });
-export const AI_REQUEST_BUDGET_MS = 45000;
+export const AI_REQUEST_BUDGET_MS = 30000;
 const CALL_TIMEOUT_MS = 12000;
 type Options = { fetch?: typeof fetch; signal?: AbortSignal; requestId?: string };
 function abortError(signal: AbortSignal) {
@@ -223,6 +223,7 @@ export class AI {
     input: Message[],
     context: StreamContext,
     onSentence: (sentence: string, header: { mode: string; safety: string }) => Promise<void>,
+    onFirstText?: () => void,
   ) {
     // Free-form emotion labels belong to user input; only catalog labels and server flags enter instructions.
     const freeLabel =
@@ -265,6 +266,18 @@ export class AI {
           )
           .length(1),
       });
+      const reflection = context.forceComplete
+        ? complete
+        : complete.extend({
+            perspectiveQuote: z
+              .string()
+              .trim()
+              .min(1)
+              .max(200)
+              .describe(
+                "사용자 자신이 택한 다른 시각·태도·선택을 보여주는 정확한 원문. 사건이나 감정 설명만 있으면 continue.",
+              ),
+          });
       const safety = streamReplySchema.extend({ mode: z.literal("safety") });
       const refusal = streamReplySchema.extend({ mode: z.literal("refusal") });
       const ongoing = streamReplySchema.extend({
@@ -302,7 +315,7 @@ export class AI {
           .max(300)
           .regex(/^[^?？؟﹖\n]+[?？]$/)
           .describe(
-            "그 장면에서 아직 듣지 못한 한 가지. 범위를 위 강도의 지침에 맞추고 이미 밝힌 기대는 다시 묻지 않는다.",
+            "이미 밝힌 생각·바람·걱정을 되묻지 않는다. 사용자의 말에서 실제로 확인할 수 있거나 다음 시각을 열 새 정보 한 가지를 구체적으로 묻는다. 강도에 맞는 범위로 좁힌다.",
           ),
       });
       const close = streamReplySchema.extend({
@@ -322,7 +335,7 @@ export class AI {
         refusal,
         ...(context.forceComplete ? [] : context.openingQuestion ? [opening] : [ongoing]),
         ...(context.forceComplete ? [close] : []),
-        ...(context.openingQuestion || context.exploring || context.skipDiary ? [] : [complete]),
+        ...(context.openingQuestion || context.exploring || context.skipDiary ? [] : [reflection]),
       ]);
       const schema = z.object({ reply: replies }).strict();
       const stream = await this.client.responses.create(
@@ -339,12 +352,14 @@ export class AI {
           max_output_tokens: this.output,
           instructions:
             BRIEF_PROMPT +
+            "\n지침 버전 " +
+            PROMPT_VERSION +
             "\n" +
             (context.forceComplete
-              ? "이번에는 질문 없이 마무리하세요. 기록 거절이면 close로 짧게 인사하세요."
+              ? "이번에는 질문 없이 마무리하세요. 기록을 원하면 complete, 기록을 거절했거나 듣기만 원하면 close입니다. close에서도 실제로 나눈 핵심이나 아직 모르는 점 하나를 담고 기록 권유는 생략하세요."
               : context.openingQuestion
                 ? "첫 자유 입력입니다. sentences에는 말한 장면과 선택 강도에 맞는 공감 평서문 하나, question에는 그 장면에서 아직 듣지 못한 한 가지를 묻는 짧은 질문 하나를 쓰세요. 두 선택지를 나열하거나 감정과 강도를 다시 묻지 마세요."
-                : "한 가지씩 이야기하세요. 사용자가 더 이야기하려 하면 continue로 이어가세요.") +
+                : "후속입니다. 반응의 이유와 마음을 대하는 태도·선택이 모두 사용자 말에 있으면 complete로 정리하세요. 둘 중 하나가 아직 없거나 탐색을 원하면 continue입니다. 모르겠다는 지점은 같은 질문으로 되묻지 마세요.") +
             (context.listening
               ? " 추가 질문을 하지 마세요. 듣기만 원하면 이해한 내용만 반영하고, 직접 부탁한 도움이 있으면 그 요청에 짧게 답하세요."
               : "") +
@@ -364,7 +379,12 @@ export class AI {
           raw += event.delta;
           if (raw.length > 16000)
             throw new AppError(502, "FORMAT", "답변 형식을 확인하지 못했어요.");
-          for (const sentence of fields.push(event.delta))
+          const sentences = fields.push(event.delta);
+          if (fields.hasSentenceText && onFirstText) {
+            onFirstText();
+            onFirstText = undefined;
+          }
+          for (const sentence of sentences)
             await onSentence(sentence, { mode: fields.mode, safety: fields.safety });
         } else if (event.type === "response.completed") {
           if (

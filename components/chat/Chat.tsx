@@ -38,6 +38,16 @@ const sessionResponse = z.object({ conversationId: z.string().uuid(), token: z.s
 type Session = { conversationId: string; token: string };
 type Pending = { text: string; action: "chat" | "summary" | "continue"; messageId?: string };
 type Panel = "help" | "start" | "privacy" | "reset" | "survey" | "emotion" | null;
+async function openSession(signal: AbortSignal): Promise<Session> {
+  const response = await fetch("/api/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]),
+  });
+  if (!response.ok) throw await failedChatRequest(response);
+  return sessionResponse.parse(await response.json());
+}
 export default function Chat({ config }: { config: PublicConfig }) {
   const [started, setStarted] = useState(false),
     [emotion, setEmotion] = useState<EmotionSelection | null>(null),
@@ -69,8 +79,14 @@ export default function Chat({ config }: { config: PublicConfig }) {
     [unread, setUnread] = useState(false);
   const [viewEpoch, setViewEpoch] = useState(0),
     [surveyInvite, setSurveyInvite] = useState(false);
+  const [slowReply, setSlowReply] = useState(false);
+  const [surveyAvailable, setSurveyAvailable] = useState(false);
   const [conversationLimit, setConversationLimit] = useState(false);
+  const [invalidInput, setInvalidInput] = useState<string | null>(null);
   const [sessionInvalid, setSessionInvalid] = useState(false);
+  const openingSession = useRef<{ controller: AbortController; promise: Promise<Session> } | null>(
+    null,
+  );
   const shell = useRef<HTMLElement>(null);
   const controller = useRef<AbortController | null>(null),
     generation = useRef(0),
@@ -102,13 +118,30 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setUnread(false);
     setViewEpoch((e) => e + 1);
     setSurveyInvite(false);
+    setSurveyAvailable(false);
     setConversationLimit(false);
     setSessionInvalid(false);
+    setInvalidInput(null);
     setPanel(null);
     nearBottom.current = true;
   };
   useLayoutEffect(() => (shell.current ? installPagePrivacy(shell.current, reset) : undefined), []);
   useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => {
+    if (!started) return;
+    const controller = new AbortController();
+    const promise = openSession(controller.signal);
+    openingSession.current = { controller, promise };
+    promise
+      .then((value) => {
+        if (!controller.signal.aborted) setSession(value);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (openingSession.current?.promise === promise) openingSession.current = null;
+      });
+    return () => controller.abort();
+  }, [started]);
   useEffect(() => {
     if (panel) {
       dialog.current?.showModal();
@@ -150,7 +183,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
         messageId: crypto.randomUUID(),
       };
     request.messageId ||= crypto.randomUUID();
-    if (!request.text || request.text.length > config.maxInput) return;
+    if (!request.text || request.text === invalidInput || request.text.length > config.maxInput)
+      return;
     if (!acknowledged) {
       setPanel("start");
       return;
@@ -161,24 +195,33 @@ export default function Chat({ config }: { config: PublicConfig }) {
     controller.current = abort;
     setPending(request);
     setStreamText("");
+    setInvalidInput(null);
+    setSlowReply(false);
     setStatus("waiting");
     setError("");
     nearBottom.current = true;
     const requestId = receipt.current?.data.requestId || crypto.randomUUID();
     performance.mark("chat-send:" + requestId);
     requestAnimationFrame(() => performance.mark("chat-ack:" + requestId));
+    const deadline = AbortSignal.any([abort.signal, AbortSignal.timeout(35000)]);
+    const delayNotice = setTimeout(() => {
+      if (epoch === generation.current) setSlowReply(true);
+    }, 10000);
     let firstText = false;
     try {
       let active = receipt.current?.active || session;
       if (!active) {
-        const response = await fetch("/api/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-          signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
-        });
-        if (!response.ok) throw await failedChatRequest(response);
-        active = sessionResponse.parse(await response.json());
+        const opening = openingSession.current;
+        if (opening) {
+          const cancelOpening = () => opening.controller.abort();
+          deadline.addEventListener("abort", cancelOpening, { once: true });
+          try {
+            active = await opening.promise;
+          } finally {
+            deadline.removeEventListener("abort", cancelOpening);
+          }
+        } else active = await openSession(deadline);
+        deadline.throwIfAborted();
         if (epoch !== generation.current) return;
         setSession(active);
       }
@@ -187,6 +230,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
       const baseHistory = receipt.current?.history || history;
       let data = receipt.current?.data;
       if (!data) {
+        performance.mark("chat-request:" + requestId);
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
@@ -200,12 +244,13 @@ export default function Chat({ config }: { config: PublicConfig }) {
             message: request.text,
             action: request.action,
           }),
-          signal: AbortSignal.any([abort.signal, AbortSignal.timeout(90000)]),
+          signal: deadline,
         });
         if (!response.ok) {
           const failed = await failedChatRequest(response);
           if (epoch !== generation.current) return;
           if (["SESSION", "STATE", "STALE"].includes(failed.code || "")) setSessionInvalid(true);
+          if (response.status === 400 || response.status === 413) setInvalidInput(request.text);
           if (failed.code === "CONTEXT") setConversationLimit(true);
           throw failed;
         }
@@ -214,6 +259,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
             setStreamText(text);
             if (!firstText) {
               firstText = true;
+              clearTimeout(delayNotice);
+              performance.mark("chat-text:" + requestId);
               requestAnimationFrame(() =>
                 requestAnimationFrame(() => performance.mark("chat-first-paint:" + requestId)),
               );
@@ -231,7 +278,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversationId: active.conversationId, token: data.token }),
-        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+        signal: AbortSignal.any([deadline, AbortSignal.timeout(10000)]),
       });
       if (!confirmed.ok)
         throw new ChatDisplayError(
@@ -265,6 +312,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
       setHelp(data.help);
       setConversationLimit(data.conversationLimit === true);
       setSurveyInvite(data.surveyReady && !data.help);
+      if (data.surveyReady && !data.help) setSurveyAvailable(true);
       if (data.notice) setError("안전 검수를 마치지 못해 대체 안내를 표시했어요.");
     } catch (e) {
       if (epoch !== generation.current) return;
@@ -276,6 +324,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
         setError(chatErrorMessage(e));
       }
     } finally {
+      clearTimeout(delayNotice);
       if (epoch === generation.current) {
         running.current = false;
         controller.current = null;
@@ -386,6 +435,9 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       "강도 미정"}
                 </span>
                 <button onClick={() => setPanel("emotion")}>바꾸기</button>
+                {surveyAvailable && !surveyInvite && !help && (
+                  <button onClick={() => setPanel("survey")}>사용 경험 설문</button>
+                )}
                 <small>{complete ? "대화 마침" : help ? "안전 확인" : "이야기 중"}</small>
               </div>
               <div
@@ -462,18 +514,26 @@ export default function Chat({ config }: { config: PublicConfig }) {
                 {status === "waiting" && (
                   <div className="waiting" role="status">
                     <LoaderCircle size={17} className="spin" />
-                    {streamText ? "답변을 이어서 받고 있어요…" : "보내주신 이야기를 읽고 있어요…"}
+                    {streamText
+                      ? "답변을 이어서 받고 있어요…"
+                      : slowReply
+                        ? "답변 도착이 늦어지고 있어요. 중단한 뒤 다시 요청할 수 있어요."
+                        : "보내주신 이야기를 읽고 있어요…"}
                   </div>
                 )}
                 {error && (
                   <div className="error-note" role="alert">
                     <p>{error}</p>
-                    {pending && status !== "waiting" && !sessionInvalid && !conversationLimit && (
-                      <button onClick={() => void send(pending)}>
-                        <RotateCcw size={16} />
-                        {receipt.current ? "받은 답변 접수 다시 확인" : "다시 답변 받기"}
-                      </button>
-                    )}
+                    {pending &&
+                      invalidInput === null &&
+                      status !== "waiting" &&
+                      !sessionInvalid &&
+                      !conversationLimit && (
+                        <button onClick={() => void send(pending)}>
+                          <RotateCcw size={16} />
+                          {receipt.current ? "받은 답변 접수 다시 확인" : "다시 답변 받기"}
+                        </button>
+                      )}
                   </div>
                 )}
                 {help && (
@@ -546,7 +606,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                     >
                       사용 경험 알려주기
                     </a>
-                    <small>선택 참여 · 채팅 내용은 보내지 않아요</small>
+                    <small>선택 참여 · 기록을 복사하지 않아도 참여할 수 있어요</small>
                   </div>
                 )}
               </div>
@@ -621,7 +681,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       key="send"
                       type="submit"
                       className="send-button"
-                      disabled={!draft.trim() || conversationLimit || sessionInvalid}
+                      disabled={
+                        !draft.trim() ||
+                        draft.trim() === invalidInput ||
+                        conversationLimit ||
+                        sessionInvalid
+                      }
                       aria-label="메시지 전송"
                     >
                       <Send size={19} />

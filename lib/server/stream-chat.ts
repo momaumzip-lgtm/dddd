@@ -16,6 +16,7 @@ export const streamReplySchema = z
 export type StreamReply = z.infer<typeof streamReplySchema> & {
   diaryDraft?: string;
   sourceQuote?: string;
+  perspectiveQuote?: string;
 };
 export type StreamContext = {
   emotion: ReturnType<typeof selectionContext>;
@@ -43,6 +44,7 @@ export interface StreamingProvider {
     messages: Message[],
     context: StreamContext,
     onSentence: (text: string, header: { mode: string; safety: string }) => Promise<void>,
+    onFirstText?: () => void,
   ): Promise<StreamReply>;
 }
 const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
@@ -113,9 +115,12 @@ export async function runStreamingChat(
     diaryDraft: string | null = null,
     committed = false,
     questions = 0,
-    mode = "complete",
+    mode = "continue",
     firstMs: number | undefined;
+  let deferredSummary = "";
   const admissionMs = performance.now() - started;
+  let modelFirstTextMs: number | undefined;
+  let generationStartedMs: number | undefined;
   let generationMs = 0,
     modelFirstMs: number | undefined,
     outputCheckMs = 0;
@@ -153,6 +158,7 @@ export async function runStreamingChat(
       mode = "safety";
     } else if (!body) {
       const genStart = performance.now();
+      generationStartedMs = genStart - started;
       let suppressed = false;
       const received: string[] = [];
       const result = await ai.streamReply(
@@ -233,7 +239,11 @@ export async function runStreamingChat(
               "OUTPUT_SAFETY",
               "답변의 안전을 확인하지 못했어요. 도움 받기를 이용할 수 있어요.",
             );
-          publish(sentence);
+          if (h.mode === "complete" && !plan.forceComplete) deferredSummary = sentence;
+          else publish(sentence);
+        },
+        () => {
+          modelFirstTextMs = performance.now() - started;
         },
       );
       generationMs = performance.now() - genStart;
@@ -244,26 +254,39 @@ export async function runStreamingChat(
       )
         throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
       mode = result.mode;
-      if (!body) {
-        if (mode === "continue")
-          publish(
-            plan.listening
-              ? "천천히 이어서 들을게요."
-              : "마음에 남은 부분부터 이어서 들려주셔도 좋아요.",
-          );
-        else if (mode === "close") publish("오늘 이야기는 여기에서 마칠게요.");
-        else if (mode === "complete" && !result.diaryDraft)
+      if (mode === "complete" && !plan.forceComplete) {
+        const quotes = [result.sourceQuote?.trim(), result.perspectiveQuote?.trim()];
+        if (
+          plan.skipDiary ||
+          plan.exploring ||
+          !result.diaryDraft ||
+          !deferredSummary ||
+          quotes[0] === quotes[1] ||
+          !quotes.every(
+            (q) => q && messages.some((m) => m.role === "user" && m.content.includes(q)),
+          )
+        ) {
           throw new AppError(
             502,
-            "QUESTION",
-            "질문 없는 정리를 완성하지 못했어요. 다시 요청할 수 있어요.",
+            "REFLECTION_SOURCE",
+            "정리에 담을 내용을 확인하지 못했어요. 입력은 그대로 남아 있어요.",
           );
+        }
       }
-      // If the language filter removed a compound question, keep the reflection and the same live turn.
-      if (plan.openingQuestion && mode === "continue" && safety === "normal" && questions === 0) {
-        publish("지금 떠오르는 장면에서 가장 마음에 남은 건 무엇인가요?");
-        questions++;
-      }
+      if (!body && !deferredSummary && !(mode === "complete" && result.diaryDraft))
+        throw new AppError(
+          502,
+          "EMPTY",
+          mode === "complete" || mode === "close"
+            ? "질문 없는 정리를 완성하지 못했어요. 다시 요청할 수 있어요."
+            : "표시할 답변을 받지 못했어요. 입력은 그대로 남아 있어요.",
+        );
+      if (plan.openingQuestion && mode === "continue" && safety === "normal" && questions === 0)
+        throw new AppError(
+          502,
+          "QUESTION",
+          "첫 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
+        );
       if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
         const quote = result.sourceQuote?.trim();
         if (!quote || !messages.some((m) => m.role === "user" && m.content.includes(quote)))
@@ -276,7 +299,7 @@ export async function runStreamingChat(
         if (reviewed.flagged)
           throw new AppError(502, "OUTPUT_SAFETY", "기록 초안을 확인하지 못했어요.");
         diaryDraft = result.diaryDraft;
-        if (!body) publish(diaryDraft);
+        if (!body) publish(deferredSummary || diaryDraft);
       }
     }
     const progress: Progress =
@@ -287,8 +310,7 @@ export async function runStreamingChat(
             questions: plan.current.questions + questions,
             completed: plan.forceComplete && (mode === "complete" || mode === "close"),
           };
-    const surveyReady =
-      progress.completed && (mode === "complete" || mode === "close") && safety === "normal";
+    const surveyReady = (progress.completed || Boolean(diaryDraft)) && safety === "normal";
     if (diaryDraft && safety === "normal") publish("\n\n" + DIARY_INVITATION);
     progress.messageIds = [...(args.progress.messageIds || []), messageId];
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");
@@ -306,7 +328,9 @@ export async function runStreamingChat(
       timing: {
         admissionMs,
         firstTextMs: firstMs,
+        modelFirstTextMs,
         modelFirstSentenceMs: modelFirstMs,
+        generationStartedMs,
         generationMs,
         outputCheckMs,
         totalMs: performance.now() - started,

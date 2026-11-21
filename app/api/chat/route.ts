@@ -5,10 +5,12 @@ import { limits, configured, chatModel } from "@/lib/server/config";
 import { json, failure, readJson } from "@/lib/server/http";
 import { Gate } from "@/lib/server/limits";
 import { DatabaseStore } from "@/lib/server/database";
+import { PROMPT_VERSION } from "@/lib/server/prompts";
 import { runChat } from "@/lib/server/chat";
 import { AppError, explainProviderError } from "@/lib/server/errors";
 export const maxDuration = 60;
 export async function POST(req: NextRequest) {
+  const arrived = performance.now();
   try {
     const raw = await readJson(req, 128000);
     if (
@@ -57,6 +59,7 @@ export async function POST(req: NextRequest) {
     const { AI } = await import("@/lib/server/openai");
     if (req.headers.get("accept")?.includes("application/x-ndjson")) {
       const { runStreamingChat } = await import("@/lib/server/stream-chat");
+      const readyMs = performance.now() - arrived;
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         async start(controller) {
@@ -108,11 +111,18 @@ export async function POST(req: NextRequest) {
               questions: result.progress.questions,
               emotion: result.emotion,
               conversationLimit: result.history.length >= MAX_HISTORY_MESSAGES,
-              timing: result.timing,
+              timing: {
+                promptVersion: PROMPT_VERSION,
+                model: chatModel(),
+                requestSetupMs: readyMs,
+                ...result.timing,
+              },
             });
             console.info("chat_timing", {
               requestId: p.requestId,
               model: chatModel(),
+              promptVersion: PROMPT_VERSION,
+              requestSetupMs: readyMs,
               ...result.timing,
             });
           } catch (error) {
