@@ -50,10 +50,10 @@ function within<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
   });
 }
 // Count written sentence endings, while allowing decimals, dates and punctuation inside quotes.
-const sentenceText = String.raw`(?:[^.!?。！？\r\n]|\.[0-9A-Za-z]|[.!?。！？][”’"』」])+`;
-const oneDiarySentence = new RegExp(`^${sentenceText}[.!?。！？]*$`);
+const sentenceText = String.raw`(?:[^.!?。！？\r\n]|[0-9]+\.[0-9]+|[.!?。！？][”’"』」])+`;
+const oneDiarySentence = new RegExp(`^${sentenceText}[.!?。！？]?$`);
 const twoDiarySentences = new RegExp(
-  `^(?:${sentenceText}[.!?。！？]+[ \\t]+)?${sentenceText}[.!?。！？]*$`,
+  `^(?:${sentenceText}[.!?。！？]+[ \\t]+)?${sentenceText}[.!?。！？]?$`,
 );
 export class AI {
   private client: OpenAI;
@@ -243,13 +243,18 @@ export class AI {
       const singleRequested = /한\s*(?:문장|줄)(?:으로|로|만)/.test(input.at(-1)?.content ?? "");
       const complete = streamReplySchema.extend({
         mode: z.literal("complete"),
+        sourceQuote: z.string().trim().min(1).max(200),
         diaryDraft: z
           .string()
           .trim()
           .min(1)
           .max(500)
-          .regex(singleRequested ? oneDiarySentence : twoDiarySentences),
-        sourceQuote: z.string().trim().min(1).max(200),
+          .regex(singleRequested ? oneDiarySentence : twoDiarySentences)
+          .describe(
+            singleRequested
+              ? "한 문장만 쓴다. 사건을 앞 문장으로 끝내지 말고, 근거 구절에 담긴 마음이나 바람을 중심으로 자연스럽게 연결한다."
+              : "사용자 입장에서 남길 한두 문장의 기록",
+          ),
         sentences: z
           .array(
             z
@@ -275,6 +280,24 @@ export class AI {
           .min(1)
           .max(2),
       });
+      const opening = ongoing.extend({
+        sentences: z
+          .array(
+            z
+              .string()
+              .trim()
+              .min(1)
+              .max(600)
+              .regex(/^[^?？؟﹖\n]+$/),
+          )
+          .length(1),
+        question: z
+          .string()
+          .trim()
+          .min(2)
+          .max(300)
+          .regex(/^[^?？؟﹖\n]+[?？]$/),
+      });
       const close = streamReplySchema.extend({
         mode: z.literal("close"),
         sentences: z
@@ -290,9 +313,9 @@ export class AI {
       const replies = z.discriminatedUnion("mode", [
         safety,
         refusal,
-        ...(context.forceComplete ? [] : [ongoing]),
-        ...(context.exploring ? [] : [close]),
-        ...(context.exploring || context.skipDiary ? [] : [complete]),
+        ...(context.forceComplete ? [] : context.openingQuestion ? [opening] : [ongoing]),
+        ...(context.openingQuestion || context.exploring ? [] : [close]),
+        ...(context.openingQuestion || context.exploring || context.skipDiary ? [] : [complete]),
       ]);
       const schema = z.object({ reply: replies }).strict();
       const stream = await this.client.responses.create(
@@ -312,9 +335,11 @@ export class AI {
             "\n" +
             (context.forceComplete
               ? "이번에는 질문 없이 마무리하세요. 기록 거절이면 close로 짧게 인사하세요."
-              : "한 가지씩 이야기하세요. 사용자가 더 이야기하려 하면 continue로 이어가세요.") +
+              : context.openingQuestion
+                ? "첫 자유 입력입니다. sentences에는 말한 장면과 선택 강도에 맞는 공감 평서문 하나, question에는 그 장면에서 아직 듣지 못한 한 가지를 묻는 짧은 질문 하나를 쓰세요. 두 선택지를 나열하거나 감정과 강도를 다시 묻지 마세요."
+                : "한 가지씩 이야기하세요. 사용자가 더 이야기하려 하면 continue로 이어가세요.") +
             (context.listening
-              ? " 사용자는 조언을 원하지 않습니다. 행동 권유나 질문 없이 이해한 내용만 반영하세요."
+              ? " 추가 질문을 하지 마세요. 듣기만 원하면 이해한 내용만 반영하고, 직접 부탁한 도움이 있으면 그 요청에 짧게 답하세요."
               : "") +
             "\n검증된 현재 상태(JSON 데이터): " +
             JSON.stringify(trustedContext),
@@ -341,7 +366,11 @@ export class AI {
             event.response.incomplete_details
           )
             throw new AppError(502, "INCOMPLETE", "답변을 완성하지 못했어요.");
-          final = schema.parse(JSON.parse(raw)).reply;
+          const reply = schema.parse(JSON.parse(raw)).reply;
+          final =
+            "question" in reply && typeof reply.question === "string"
+              ? { ...reply, sentences: [...reply.sentences, reply.question] }
+              : reply;
           completed = true;
           console.info("chat_usage", {
             requestId: this.requestId,

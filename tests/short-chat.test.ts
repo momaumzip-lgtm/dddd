@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  intensityBands,
   emotionCatalog,
   searchEmotions,
   unknownEmotion,
@@ -154,7 +155,7 @@ test("four turns carry full ordered context and current emotion; signed completi
     /먼저 마무리/,
   );
 });
-test("early completion and explicit ending never require another question", async () => {
+test("an explicit ending or a later synthesis can complete without a question", async () => {
   for (const message of ["정리해줘", "그만할래", "지금 끝내자"]) {
     const p = provider(),
       r = await runStreamingChat(
@@ -167,7 +168,14 @@ test("early completion and explicit ending never require another question", asyn
     assert.ok(!r.body.includes("?"));
   }
   const early = await runStreamingChat(
-    args(),
+    {
+      ...args(),
+      progress: { turns: 1, questions: 1, completed: false },
+      history: [
+        { role: "user", content: "전에도 같은 말을 들었어요." },
+        { role: "assistant", content: "어떤 말을 바랐나요?" },
+      ],
+    },
     new Gate(new LuaStore(), cap),
     provider("complete").ai,
     () => {},
@@ -612,6 +620,12 @@ test("production response schema accepts a one-line completion and rejects a mul
       message: "한 문장으로 기록해 주세요.",
       valid: false,
     },
+    {
+      sentences: summary,
+      diaryDraft: "후배가 나갔다.Recognition 받고 싶었던 건 아니다.",
+      message: "한 문장으로 기록해 주세요.",
+      valid: false,
+    },
   ]) {
     const wire = JSON.stringify({
       reply: {
@@ -666,7 +680,7 @@ test("listening, uncertainty, continued exploration and diary preference do not 
   );
 });
 test("only supported draft text reaches the completed receipt", async () => {
-  const message = "오래 준비한 걸 알아주길 바랐어.";
+  const message = "오래 준비한 걸 알아주길 바랐어. 바로 기록해줘.";
   for (const quote of ["오래 준비한 걸", "없는 말"]) {
     const p = provider("complete");
     const draft = "나는 오래 준비한 걸 알아주길 바랐다.";
@@ -752,4 +766,109 @@ test("a later request to write can follow listening or a declined diary", () => 
   assert.equal(next.listening, false);
   assert.equal(next.skipDiary, false);
   assert.equal(next.forceComplete, true);
+});
+
+test("ordinary first disclosures need a question, including advice-only and diary-only refusals", async () => {
+  for (const message of [
+    "그냥 별로예요.",
+    "조언은 싫어요.",
+    "기록은 안 할래요.",
+    "오래 준비한 시간을 알아주길 바랐는데 친구 답이 짧아 서운했어요.",
+  ]) {
+    assert.equal(responsePlan(freshProgress, "chat", message, []).openingQuestion, true);
+  }
+  for (const message of [
+    "그냥 들어주세요.",
+    "질문하지 말고 들어줘.",
+    "질문 없이 듣고 싶어요.",
+    "오늘은 여기까지 할게요.",
+    "지금 바로 기록해줘.",
+    "한 문장으로 적고 싶어요.",
+    "문자 한 줄만 써 주세요.",
+  ]) {
+    assert.equal(responsePlan(freshProgress, "chat", message, []).openingQuestion, false, message);
+  }
+  const gate = new Gate(new LuaStore(), cap),
+    a = args();
+  for (const mode of ["complete", "close"]) {
+    await assert.rejects(
+      runStreamingChat({ ...a, rid: id() }, gate, provider(mode).ai, () =>
+        assert.fail("premature closing text"),
+      ),
+      /첫 답변/,
+    );
+  }
+  const result = await runStreamingChat({ ...a, rid: id() }, gate, provider().ai, () => {});
+  assert.equal(result.progress.completed, false);
+  assert.equal(result.surveyReady, false);
+  assert.equal(result.progress.questions, 1);
+});
+test("a compound question removed from an opening still leaves exactly one answerable question", async () => {
+  const p = provider();
+  p.ai.streamReply = async (_i, _c, emit) => {
+    const reply = {
+      mode: "continue" as const,
+      safety: "normal" as const,
+      sentences: ["그 말이 마음에 남았군요.", "무엇을 기대했고 어떻게 느끼셨나요?"],
+    };
+    for (const text of reply.sentences)
+      await emit(text, { mode: reply.mode, safety: reply.safety });
+    return reply;
+  };
+  const result = await runStreamingChat(args(), new Gate(new LuaStore(), cap), p.ai, () => {});
+  assert.equal(result.progress.questions, 1);
+  assert.match(result.body, /^그 말이 마음에 남았군요\..+\?$/);
+  assert.doesNotMatch(result.body, /무엇을 기대/);
+  assert.equal(result.surveyReady, false);
+});
+test("the opening SDK contract streams reflection before its required question and excludes closing modes", async () => {
+  process.env.OPENAI_API_KEY = "offline-http-stream-test";
+  const lines = ["그 말이 마음에 남았군요.", "그때 어떤 한마디가 듣고 싶었나요?"];
+  for (const intensityBand of intensityBands) {
+    const context = {
+      emotion: selectionContext({ ...emotion, intensityBand: intensityBand.id }),
+      openingQuestion: true,
+      forceComplete: false,
+      listening: false,
+      turn: 1,
+      previousSafety: "normal" as const,
+    };
+    const ai = new AI("gpt-6-luna", 1000, {
+      fetch: async (_url, init) => {
+        const request = JSON.parse(String(init?.body));
+        const branches = request.text.format.schema.properties.reply.anyOf;
+        assert.deepEqual(
+          branches.map((b: any) => b.properties.mode.const),
+          ["safety", "refusal", "continue"],
+        );
+        assert.ok(branches.at(-1).required.includes("question"));
+        const state = JSON.parse(request.instructions.split("검증된 현재 상태(JSON 데이터): ")[1]);
+        assert.deepEqual(state.emotion, context.emotion);
+        const wire = JSON.stringify({
+          reply: { mode: "continue", safety: "normal", sentences: [lines[0]], question: lines[1] },
+        });
+        const events = [
+          ...Array.from(wire, (delta) => ({ type: "response.output_text.delta", delta })),
+          {
+            type: "response.completed",
+            response: { status: "completed", error: null, incomplete_details: null },
+          },
+        ];
+        return new Response(
+          events.map((e) => "data: " + JSON.stringify(e) + "\n\n").join("") + "data: [DONE]\n\n",
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
+    const shown: string[] = [];
+    const reply = await ai.streamReply(
+      [{ role: "user", content: "친구의 답장이 짧았어요." }],
+      context,
+      async (text) => {
+        shown.push(text);
+      },
+    );
+    assert.deepEqual(shown, lines);
+    assert.deepEqual(reply.sentences, shown);
+  }
 });

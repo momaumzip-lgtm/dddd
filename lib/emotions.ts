@@ -178,18 +178,24 @@ export function emotionLabel(value: EmotionSelection) {
 export function selectionContext(value: EmotionSelection) {
   const entry = emotionCatalog.find((e) => e.id === value.emotionId);
   return {
+    emotionId: value.emotionId,
+    version: value.version,
     emotion: emotionLabel(value),
     category: entry?.category || "unknown",
     intensityBand: value.intensityBand,
     responseGuidance: {
-      "0_20": "가볍고 자연스럽게. 과장하지 않는다. 깊이 이해하려는 뜻이 있으면 충분히 함께 살핀다.",
-      "20_40": "구체적인 상황에 짧게 공감하고 꼭 필요한 질문 하나만 한다.",
-      "40_60": "이미 아는 사실을 다시 묻지 않고 사건과 생각을 구분할 쉬운 질문 하나만 한다.",
-      "60_80": "마음에 남은 무게를 짚고 한 가지씩 이야기한다. 더 말하고 싶으면 충분히 듣는다.",
+      "0_20":
+        "잠깐 스친 느낌도 가볍게 받아준다. 큰 상처나 강한 기쁨으로 부풀리지 않는다. 더 알고 싶어 하면 장면 속 작은 차이를 살핀다.",
+      "20_40":
+        "가볍게 남은 마음을 당사자가 쓴 말로 받아준다. 장면 속 말이나 행동 하나에서 이야기를 잇는다.",
+      "40_60":
+        "마음이 움직인 대목을 분명히 짚는다. 이미 들은 내용을 제외하고 그때 떠오른 생각이나 기대 한 가지를 살핀다.",
+      "60_80":
+        "크게 와닿았다는 점을 충분히 받아준다. 원인 분석이나 여러 선택지 대신 기억나는 한마디나 한 장면으로 좁힌다.",
       "80_100":
         entry?.category === "positive"
           ? "실제 좋은 일에 맞춰 기쁨을 함께한다. 불안 진정이나 위기 안내를 붙이지 않는다."
-          : "차분한 짧은 반영으로 부담을 낮춘다. 설명을 재촉하거나 생각의 옳고 그름을 따지지 않는다. 이 값만으로 위기로 판정하지 않는다.",
+          : "지금 느끼는 감정의 무게를 차분하고 짧게 인정한다. 한 단어나 한마디로도 답할 수 있도록 한 장면에 머문다. 설명을 재촉하거나 원인을 추정하지 않는다. 이 값만으로 위기로 판정하지 않는다.",
       unknown: "강도를 추측하거나 숫자로 만들지 않고 말한 경험부터 다룬다.",
     }[value.intensityBand],
   };

@@ -1770,13 +1770,10 @@ dialog .fine-print {
 }
 
 .participant-info {
-  display: grid;
-  gap: 3px;
   margin: 18px 0 0;
   color: #44564a;
   font-size: 0.83rem;
 }
-.participant-info a,
 .survey-disclosure a {
   text-decoration: underline;
   text-underline-offset: 3px;

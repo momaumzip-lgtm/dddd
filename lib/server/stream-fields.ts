@@ -37,7 +37,12 @@ export class ReplyFields {
           } else {
             if (this.key === "mode") this.mode = value;
             else if (this.key === "safety") this.safety = value;
-            else if (this.key !== "diaryDraft" && this.key !== "sourceQuote")
+            else if (this.key === "question") {
+              if (!this.mode || !this.safety || this.sentences.length !== 1)
+                throw new Error("Missing opening reflection");
+              this.sentences.push(value);
+              ready.push(value);
+            } else if (this.key !== "diaryDraft" && this.key !== "sourceQuote")
               throw new Error("Unknown response field");
           }
         }

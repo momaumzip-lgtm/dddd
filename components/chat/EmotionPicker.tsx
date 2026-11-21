@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { audience, supportPhone, supportLink } from "@/lib/service-info";
+import { audience } from "@/lib/service-info";
 import { Check } from "lucide-react";
 import {
   emotionCatalog,
@@ -169,9 +169,6 @@ export default function EmotionPicker({
       {!onCancel && (
         <footer className="participant-info">
           <span>이용 대상: {audience}</span>
-          <span>
-            문의 및 삭제 요청: <a href={supportLink}>{supportPhone}</a>
-          </span>
         </footer>
       )}
     </section>

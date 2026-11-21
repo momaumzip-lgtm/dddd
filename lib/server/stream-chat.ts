@@ -23,6 +23,7 @@ export type StreamContext = {
   listening: boolean;
   skipDiary?: boolean;
   exploring?: boolean;
+  openingQuestion?: boolean;
   turn: number;
   previousSafety: Safety;
 };
@@ -161,7 +162,8 @@ export async function runStreamingChat(
           forceComplete: plan.forceComplete,
           listening: plan.listening,
           skipDiary: plan.skipDiary,
-          exploring: plan.exploring,
+          exploring: plan.exploring || (plan.firstInput && plan.listening && !plan.forceComplete),
+          openingQuestion: plan.openingQuestion,
           turn: plan.current.turns + 1,
           previousSafety: safety,
         },
@@ -184,11 +186,21 @@ export async function runStreamingChat(
             suppressed = true;
             return;
           }
+          if (
+            plan.firstInput &&
+            !plan.forceComplete &&
+            (plan.openingQuestion || plan.listening) &&
+            h.mode !== "continue"
+          )
+            throw new AppError(502, "MODE", "첫 답변을 이어가지 못했어요. 다시 요청해 주세요.");
           if (plan.forceComplete && h.mode === "continue")
             throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
           const selected = selectSentences(
             sentence,
-            h.mode === "continue" && !plan.listening && questions === 0,
+            h.mode === "continue" &&
+              !plan.listening &&
+              questions === 0 &&
+              (!plan.openingQuestion || Boolean(body)),
           );
           if (!selected.text) return;
           sentence = selected.text;
@@ -228,7 +240,7 @@ export async function runStreamingChat(
       if (
         !suppressed &&
         (received.length !== result.sentences.length ||
-          received.some((sentence, i) => sentence !== result.sentences[i]))
+          received.some((sentence, i) => sentence.trim() !== result.sentences[i].trim()))
       )
         throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
       mode = result.mode;
@@ -246,6 +258,11 @@ export async function runStreamingChat(
             "QUESTION",
             "질문 없는 정리를 완성하지 못했어요. 다시 요청할 수 있어요.",
           );
+      }
+      // If the language filter removed a compound question, keep the reflection and the same live turn.
+      if (plan.openingQuestion && mode === "continue" && safety === "normal" && questions === 0) {
+        publish("지금 떠오르는 장면에서 가장 마음에 남은 건 무엇인가요?");
+        questions++;
       }
       if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
         const quote = result.sourceQuote?.trim();
@@ -268,7 +285,7 @@ export async function runStreamingChat(
         : {
             turns: plan.current.turns + (args.action === "summary" ? 0 : 1),
             questions: plan.current.questions + questions,
-            completed: mode !== "continue" || plan.forceComplete,
+            completed: mode === "complete" || mode === "close",
           };
     const surveyReady =
       progress.completed && (mode === "complete" || mode === "close") && safety === "normal";

@@ -10,11 +10,13 @@ export const progressSchema = z
 export type Progress = z.infer<typeof progressSchema>;
 export const freshProgress: Progress = { turns: 0, questions: 0, completed: false };
 export const wantsFinish = (text: string) =>
-  /^(?:지금\s*|이제\s*|오늘은\s*)?(?:정리해\s*(?:줘|주세요)?|그만할래(?:요)?|끝내자|마무리해\s*주세요|여기까지(?:\s*할래요)?)[.!\s]*$/.test(
+  /(?:^|[.!?]\s*|(?:대화는?|대화를)\s+)(?:(?:지금|이제|오늘은|그냥)\s*)*(?:정리해\s*(?:줘|주세요)?|그만할(?:래|게)(?:요)?|끝내자|마무리(?:할게요?|해\s*(?:줘|주세요))|여기까지(?:\s*할(?:래|게)요?)?)[.!\s]*$/.test(
     text.trim(),
   );
 export const wantsListening = (text: string) =>
-  /그냥\s*들어|조언.{0,6}(싫|말|원하지)|질문.{0,8}(싫|하지\s*마|말고|원하지)/.test(text);
+  /(?:그냥|말만|얘기만|이야기만)\s*들어|들어\s*만\s*(?:줘|주)|묻지\s*(?:말|마)|질문(?:은|을|도)?\s*(?:없이|말고|그만|빼|싫|원하지|하지\s*(?:말|마))|질문.{0,6}받고\s*싶지/.test(
+    text,
+  );
 
 export function responsePlan(
   progress: Progress,
@@ -48,7 +50,7 @@ export function responsePlan(
     }
   }
   const asksToRecordNow =
-    /(?:기록|일기|초안)(?:으로|을|를)?\s*(?:하고\s*싶(?:어|어요)|(?:해|써|만들어)\s*(?:줘|주세요))[.!\s]*$/.test(
+    /(?:(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:남기고\s*싶|하고\s*싶|쓰고\s*싶|(?:정리해|남겨|해|써|만들어)\s*(?:줘|주세요))|(?:한\s*(?:줄|문장)(?:으로|로)?|이\s*마음을?|그걸|이걸|지금|바로)\s*(?:적고\s*싶|남기고\s*싶|적어\s*(?:줘|주세요)))(?:어요?|요)?[.!\s]*$/.test(
       latest,
     );
   const forceComplete =
@@ -59,7 +61,22 @@ export function responsePlan(
     /(?:더|계속|깊이).{0,10}(?:이야기|살펴보|알아보|탐색|얘기).{0,6}(?:싶|할래|해보|볼래)/.test(
       latest,
     );
-  return { current, forceComplete, exploring, listening, skipDiary: skipDiary || listening };
+  // A direct request for wording calls for an answer. An ordinary account, even a detailed one, opens exploration.
+  const asksForWording =
+    /(?:문자|메시지|답장|표현|문구).{0,35}(?:써\s*(?:줘|주세요)|쓰면|작성해|추천해)|어떻게\s*(?:말하면|전하면|답하면|쓰면)/.test(
+      latest,
+    );
+  const firstInput = action === "chat" && progress.turns === 0 && history.length === 0;
+  const openingQuestion = firstInput && !forceComplete && !listening && !asksForWording;
+  return {
+    current,
+    forceComplete,
+    exploring,
+    listening,
+    firstInput,
+    openingQuestion,
+    skipDiary: skipDiary || listening,
+  };
 }
 export const JOURNAL_CLOSING =
   "대화로 정리된 생각을 내 것으로 만드는 마지막 단계예요. 펜을 들어 오늘의 핵심 깨달음을 다이어리에 기록해 보세요";
