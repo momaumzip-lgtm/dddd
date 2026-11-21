@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Message } from "../config";
-import { JOURNAL_CLOSING, freshProgress, responsePlan, type Progress } from "../conversation";
+import { DIARY_INVITATION, freshProgress, responsePlan, type Progress } from "../conversation";
 import { correctedSelection, selectionContext, type EmotionSelection } from "../emotions";
 import { AppError } from "./errors";
 import type { Gate } from "./limits";
@@ -285,11 +285,11 @@ export async function runStreamingChat(
         : {
             turns: plan.current.turns + (args.action === "summary" ? 0 : 1),
             questions: plan.current.questions + questions,
-            completed: mode === "complete" || mode === "close",
+            completed: plan.forceComplete && (mode === "complete" || mode === "close"),
           };
     const surveyReady =
       progress.completed && (mode === "complete" || mode === "close") && safety === "normal";
-    if (surveyReady && mode === "complete" && !plan.skipDiary) publish("\n\n" + JOURNAL_CLOSING);
+    if (diaryDraft && safety === "normal") publish("\n\n" + DIARY_INVITATION);
     progress.messageIds = [...(args.progress.messageIds || []), messageId];
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");
     await slot.stage(args.revision + 1);

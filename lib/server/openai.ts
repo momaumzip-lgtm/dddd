@@ -321,7 +321,7 @@ export class AI {
         safety,
         refusal,
         ...(context.forceComplete ? [] : context.openingQuestion ? [opening] : [ongoing]),
-        ...(context.openingQuestion || context.exploring ? [] : [close]),
+        ...(context.forceComplete ? [close] : []),
         ...(context.openingQuestion || context.exploring || context.skipDiary ? [] : [complete]),
       ]);
       const schema = z.object({ reply: replies }).strict();

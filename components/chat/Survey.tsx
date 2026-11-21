@@ -218,29 +218,21 @@ export default function Survey({
             <details className="survey-disclosure">
               <summary>설문 응답은 어떻게 전달되나요?</summary>
               <p>
-                목적: 서비스 사용 경험 개선
-                <br />
-                항목: 접속 경로와 직접 답한 문항
-                <br />
-                수신: {config.recipient}의 운영 이메일
-                <br />
-                저장·알림: Netlify Forms와 운영자 이메일
-                <br />
-                보관·삭제 기준: {config.retention}
+                서비스 사용 경험을 개선하기 위해 접속 경로와 직접 답한 문항, 동의·접수 정보를
+                받아요.
+                {config.retention}
                 <br />
                 문의 및 삭제 요청: <a href={supportLink}>{contact}</a>
               </p>
               <p>
-                채팅 원문·대화 요약·일기는 자동 첨부하지 않아요. 설문 응답은 Netlify Forms와 운영자
-                메일함에 저장돼요. Netlify는 스팸 방지를 위한 기술 정보도 처리해요. 접수·중복 방지용
-                기술 정보의 유효기간은 최대 25시간이에요. 만료값은 다음 요청 때 정리하며 호스팅
-                백업의 보관 기간은 별도예요.
+                설문 답변은 OpenAI로 보내지 않아요. 접수·중복 방지용 기술 정보는 최대 25시간
+                유효하며 만료된 값은 다음 요청 때 정리해요.
               </p>
             </details>
             <p className="fine-print">
-              제출을 선택하면 응답을 Netlify Forms에 저장하고 {config.recipient}의 운영 이메일로
-              전달하는 데 동의하게 됩니다. 보관 기준은 {config.retention} 참여를 원하지 않으면
-              대화로 돌아갈 수 있어요.
+              제출하면 설문 답변을 Netlify Forms와 {config.recipient}의 운영 이메일에 전달하는 데
+              동의해요. 두 곳에서 접수일로부터 1년간 보관한 뒤 운영자가 삭제해요. 채팅과 기록은
+              첨부하지 않아요. 설문을 건너뛰어도 괜찮아요.
             </p>
             {error && (
               <p className="error-note" role="alert">

@@ -11,7 +11,7 @@ import {
 } from "../lib/emotions";
 import { freshProgress, responsePlan } from "../lib/conversation";
 import { ReplyFields } from "../lib/server/stream-fields";
-import { readChatStream } from "../lib/browser/chat-stream";
+import { readChatStream, chatErrorMessage, failedChatRequest } from "../lib/browser/chat-stream";
 import {
   runStreamingChat,
   type StreamingProvider,
@@ -155,7 +155,7 @@ test("four turns carry full ordered context and current emotion; signed completi
     /먼저 마무리/,
   );
 });
-test("an explicit ending or a later synthesis can complete without a question", async () => {
+test("only an explicit ending closes the conversation; an offered synthesis keeps it open", async () => {
   for (const message of ["정리해줘", "그만할래", "지금 끝내자"]) {
     const p = provider(),
       r = await runStreamingChat(
@@ -180,7 +180,8 @@ test("an explicit ending or a later synthesis can complete without a question", 
     provider("complete").ai,
     () => {},
   );
-  assert.equal(early.progress.completed, true);
+  assert.equal(early.progress.completed, false);
+  assert.equal(early.surveyReady, false);
   assert.equal(
     responsePlan({ turns: 1, questions: 1, completed: false }, "chat", "응", []).forceComplete,
     false,
@@ -522,8 +523,8 @@ test("lost final packet and lost acknowledgement recover using metadata without 
   assert.equal(next.progress.turns, 2);
   assert.ok([...db.data.values()].every((v) => !v.value.includes("수정 요청")));
 });
-import { JOURNAL_CLOSING } from "../lib/conversation";
-test("normal completion appends the exact journal closing and offers survey after the summary", async () => {
+import { DIARY_INVITATION } from "../lib/conversation";
+test("explicit summary offers the survey and only invites copying when a draft exists", async () => {
   const r = await runStreamingChat(
     { ...args(), action: "summary", message: "정리해 주세요." },
     new Gate(new LuaStore(), cap),
@@ -532,8 +533,8 @@ test("normal completion appends the exact journal closing and offers survey afte
   );
   assert.equal(r.progress.completed, true);
   assert.equal(r.surveyReady, true);
-  assert.ok(r.body.endsWith(JOURNAL_CLOSING));
-  assert.equal(r.body.split(JOURNAL_CLOSING).length, 2);
+  assert.ok(!r.body.includes(DIARY_INVITATION));
+  assert.equal(r.diaryDraft, null);
   const safety = await runStreamingChat(
     { ...args(), message: "지금 약을 과다로 먹었어요." },
     new Gate(new LuaStore(), cap),
@@ -541,7 +542,7 @@ test("normal completion appends the exact journal closing and offers survey afte
     () => {},
   );
   assert.equal(safety.surveyReady, false);
-  assert.ok(!safety.body.includes(JOURNAL_CLOSING));
+  assert.ok(!safety.body.includes(DIARY_INVITATION));
 });
 import { NextRequest } from "next/server";
 import { POST as acknowledgePost } from "../app/api/chat/ack/route";
@@ -724,7 +725,7 @@ test("declining a diary closes without a writing invitation and still allows the
   );
   assert.equal(r.surveyReady, true);
   assert.equal(r.diaryDraft, null);
-  assert.ok(!r.body.includes(JOURNAL_CLOSING));
+  assert.ok(!r.body.includes(DIARY_INVITATION));
 });
 
 test("an extra question cannot discard an already useful reflection or trigger paid regeneration", async () => {
@@ -872,4 +873,69 @@ test("the opening SDK contract streams reflection before its required question a
     assert.deepEqual(shown, lines);
     assert.deepEqual(reply.sentences, shown);
   }
+});
+
+test("connection, timeout, validation and upstream errors give readable recovery messages", async () => {
+  assert.match(chatErrorMessage(new TypeError("Failed to fetch")), /연결이 잠시 끊겼/);
+  assert.match(chatErrorMessage(new DOMException("timed out", "TimeoutError")), /시간이 길어/);
+  for (const [status, pattern] of [
+    [429, /요청이 잠시/],
+    [400, /입력 내용/],
+    [503, /대화 연결/],
+  ] as const) {
+    const err = await failedChatRequest(new Response("Bad gateway", { status }));
+    assert.match(chatErrorMessage(err), pattern);
+  }
+  assert.doesNotMatch(
+    chatErrorMessage(new SyntaxError("Unexpected token")),
+    /Unexpected|SyntaxError/,
+  );
+});
+test("a spontaneous diary can be edited while the next message uses the same open session", async () => {
+  const gate = new Gate(new LuaStore(), cap),
+    base = args(),
+    p = provider();
+  let first = await runStreamingChat(base, gate, p.ai, () => {});
+  await gate.acknowledge(base.sid, base.cid, base.rid, first.revision);
+  const second = {
+    ...base,
+    progress: first.progress,
+    history: first.history,
+    revision: first.revision,
+    rid: id(),
+    message: "일정을 미리 알려줬으면 했어요.",
+  };
+  const model = provider().ai;
+  model.streamReply = async (_m, _c, emit) => {
+    const sentence = "일정을 조정할 시간을 원하셨군요.";
+    await emit(sentence, { mode: "complete", safety: "normal" });
+    return {
+      mode: "complete",
+      safety: "normal",
+      sentences: [sentence],
+      diaryDraft: "나는 일정을 미리 알고 싶었다.",
+      sourceQuote: "미리 알려줬으면",
+    };
+  };
+  const offered = await runStreamingChat(second, gate, model, () => {});
+  assert.ok(offered.diaryDraft);
+  assert.ok(offered.body.endsWith(DIARY_INVITATION));
+  assert.equal(offered.progress.completed, false);
+  assert.equal(offered.surveyReady, false);
+  await gate.acknowledge(base.sid, base.cid, second.rid, offered.revision);
+  const next = await runStreamingChat(
+    {
+      ...second,
+      history: offered.history,
+      progress: offered.progress,
+      revision: offered.revision,
+      rid: id(),
+      message: "친구가 아니라 동료였어요.",
+    },
+    gate,
+    p.ai,
+    () => {},
+  );
+  assert.equal(next.progress.turns, 3);
+  assert.equal(next.progress.completed, false);
 });

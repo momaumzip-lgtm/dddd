@@ -78,5 +78,5 @@ export function responsePlan(
     skipDiary: skipDiary || listening,
   };
 }
-export const JOURNAL_CLOSING =
-  "대화로 정리된 생각을 내 것으로 만드는 마지막 단계예요. 펜을 들어 오늘의 핵심 깨달음을 다이어리에 기록해 보세요";
+export const DIARY_INVITATION =
+  "지금까지 나눈 이야기로 짧은 기록을 만들었어요. 내 말에 맞게 고치거나, 남기고 싶을 때 복사해 두세요.";

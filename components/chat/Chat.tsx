@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  Check,
   CircleHelp,
   LoaderCircle,
   MessageCircle,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 import { type Message, type PublicConfig } from "@/lib/config";
 import { z } from "zod";
+import PrivacyNotice from "./PrivacyNotice";
 import DiaryDraft from "./DiaryDraft";
 import { supportLink } from "@/lib/service-info";
 import Survey from "./Survey";
@@ -26,14 +26,18 @@ import {
   emotionSelectionSchema,
   type EmotionSelection,
 } from "@/lib/emotions";
-import { readChatStream, type CompletedChat } from "@/lib/browser/chat-stream";
+import {
+  readChatStream,
+  ChatDisplayError,
+  chatErrorMessage,
+  failedChatRequest,
+  type CompletedChat,
+} from "@/lib/browser/chat-stream";
 import { installPagePrivacy } from "@/lib/browser/privacy";
 const sessionResponse = z.object({ conversationId: z.string().uuid(), token: z.string() });
-const errorResponse = z.object({ error: z.string(), code: z.string().optional() });
-class VisibleError extends Error {}
 type Session = { conversationId: string; token: string };
 type Pending = { text: string; action: "chat" | "summary" | "continue"; messageId?: string };
-type Panel = "help" | "privacy" | "reset" | "survey" | "emotion" | null;
+type Panel = "help" | "start" | "privacy" | "reset" | "survey" | "emotion" | null;
 export default function Chat({ config }: { config: PublicConfig }) {
   const [started, setStarted] = useState(false),
     [emotion, setEmotion] = useState<EmotionSelection | null>(null),
@@ -146,7 +150,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
     request.messageId ||= crypto.randomUUID();
     if (!request.text || request.text.length > config.maxInput) return;
     if (!acknowledged) {
-      setPanel("privacy");
+      setPanel("start");
       return;
     }
     running.current = true;
@@ -171,9 +175,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
           body: "{}",
           signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
         });
-        const raw = await response.json();
-        if (!response.ok) throw new VisibleError(errorResponse.parse(raw).error);
-        active = sessionResponse.parse(raw);
+        if (!response.ok) throw await failedChatRequest(response);
+        active = sessionResponse.parse(await response.json());
         if (epoch !== generation.current) return;
         setSession(active);
       }
@@ -198,11 +201,11 @@ export default function Chat({ config }: { config: PublicConfig }) {
           signal: AbortSignal.any([abort.signal, AbortSignal.timeout(90000)]),
         });
         if (!response.ok) {
-          const failed = errorResponse.parse(await response.json());
+          const failed = await failedChatRequest(response);
           if (epoch !== generation.current) return;
           if (["SESSION", "STATE", "STALE"].includes(failed.code || "")) setSessionInvalid(true);
           if (failed.code === "CONTEXT") setConversationLimit(true);
-          throw new VisibleError(failed.error);
+          throw failed;
         }
         data = await readChatStream(response, requestId, (text) => {
           if (epoch === generation.current) {
@@ -217,7 +220,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
         });
         if (epoch !== generation.current) return;
         if (data.conversationId !== active.conversationId)
-          throw new VisibleError(
+          throw new ChatDisplayError(
             "대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.",
           );
         receipt.current = { data, active, request, selectedVersion, history: baseHistory };
@@ -229,12 +232,14 @@ export default function Chat({ config }: { config: PublicConfig }) {
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       });
       if (!confirmed.ok)
-        throw new VisibleError(
+        throw new ChatDisplayError(
           "답변은 받았지만 접수 확인을 마치지 못했어요. 받은 답변 접수를 다시 확인해 주세요. AI를 새로 호출하지 않아요.",
         );
       if (epoch !== generation.current) return;
       if (data.conversationId !== active.conversationId)
-        throw new VisibleError("대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.");
+        throw new ChatDisplayError(
+          "대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.",
+        );
       if (emotionRef.current?.version === selectedVersion)
         selectEmotion(emotionSelectionSchema.parse(data.emotion));
       performance.mark("chat-done:" + requestId);
@@ -264,11 +269,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
         setError("답변 받기를 중단했어요. 이미 전송된 요청은 처리되거나 비용이 발생할 수 있어요.");
       } else {
         setStatus("error");
-        setError(
-          e instanceof Error
-            ? e.message + " (요청 " + requestId.slice(0, 8) + ")"
-            : "답변을 받지 못했어요. 연결을 확인하고 다시 시도해 주세요.",
-        );
+        setError(chatErrorMessage(e));
       }
     } finally {
       if (epoch === generation.current) {
@@ -353,8 +354,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
               value={emotion}
               onDone={(value) => {
                 selectEmotion(value);
-                setStarted(true);
-                if (!acknowledged) setPanel("privacy");
+                if (acknowledged) setStarted(true);
+                else setPanel("start");
               }}
             />
           ) : (
@@ -680,73 +681,19 @@ export default function Chat({ config }: { config: PublicConfig }) {
             </p>
           </>
         )}
-        {panel === "privacy" && (
-          <>
-            <h2 id="panel-title">대화를 시작하기 전에</h2>
-            <p>
-              이 서비스는 감정과 생각을 정리하는 AI 도우미이며 진단·치료·전문 상담을 제공하지
-              않아요. 사람이 실시간으로 지켜보지 않아요.
-            </p>
-            <h3>입력은 어떻게 처리되나요?</h3>
-            <p>
-              입력과 현재 대화 맥락은 답변·안전 검수를 위해 운영 서버와 OpenAI로 전달돼요. 실명,
-              연락처, 상세 주소 등 개인정보는 적지 마세요.
-            </p>
-            <h3>대화는 화면에만 보관해요</h3>
-            <p>
-              운영 앱은 원문·요약·일기를 DB나 브라우저 저장소에 기록하지 않아요. 새로고침하거나 새
-              대화를 시작하면 이전 대화를 불러올 수 없어요. 페이지를 떠날 때도 화면 내용을 지워요.
-            </p>
-            <p>
-              익명 세션 쿠키는 최대 2시간, 사용량·중복 방지용 기술 정보의 유효기간은 최대
-              25시간이에요. 만료된 기술 정보는 다음 요청 때 정리하며, 호스팅 백업에는 별도 보관
-              기간이 적용돼요. 외부로 이미 전송된 데이터를 소급 삭제한 것은 아니에요.
-            </p>
-            <h3>외부 서비스의 처리·보존</h3>
-            <p>
-              OpenAI의 API 저장 옵션은 끄지만, 보안·남용 방지 등 외부 제공자의 별도 보존 정책이
-              적용될 수 있어요.{" "}
-              {config.policy.processing ||
-                "처리 위치와 호스팅 로그 보존 조건은 운영자의 최종 확인이 필요해요."}
-            </p>
-            <a
-              href="https://developers.openai.com/api/docs/guides/your-data"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              OpenAI 데이터 처리 안내 ↗
-            </a>
-            <h3>선택 설문은 별도로 전달돼요</h3>
-            <p>
-              마무리 설문에 참여하고 별도로 동의한 경우에만 접속 경로와 선택한 응답을 운영자
-              이메일로 알리고 Netlify Forms에 저장해요. 채팅·일기는 자동 첨부하지 않아요. 설문
-              내용은 OpenAI로 보내지 않으며, Netlify Forms와 메일함의 보관 기준은 설문 화면에서 따로
-              안내해요.
-            </p>
-            <h3>운영 및 문의</h3>
-            <p>
-              운영주체: {config.operator || "운영 정보 확인 중"}
-              <br />
-              문의 및 삭제 요청: <a href={supportLink}>{config.contact}</a>
-              <br />
-              이용 대상: {config.policy.targetAge || "이용 대상 안내 확인 중"}
-            </p>
-            <p className="fine-print">
-              아래 버튼은 안내를 확인했다는 뜻이에요. 개인정보 처리 동의를 대신하지 않아요. 설문
-              이메일 전달에 대한 동의는 설문 화면에서 따로 선택할 수 있어요.
-            </p>
-            <button
-              className="primary"
-              onClick={() => {
+        {(panel === "start" || panel === "privacy") && (
+          <PrivacyNotice
+            config={config}
+            starting={panel === "start"}
+            onConfirm={() => {
+              if (panel === "start") {
                 setAcknowledged(true);
-                setPanel(null);
-                input.current?.focus();
-              }}
-            >
-              <Check size={18} />
-              안내 확인했어요
-            </button>
-          </>
+                setStarted(true);
+                requestAnimationFrame(() => input.current?.focus());
+              }
+              setPanel(null);
+            }}
+          />
         )}
         {panel === "reset" && (
           <>
