@@ -142,7 +142,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
   async function send(item?: Pending) {
     if (running.current || conversationLimit || sessionInvalid || (!item && complete)) return;
     const request: Pending = receipt.current?.request ||
-      item || {
+      item ||
+      (pending && pending.text === draft.trim() ? pending : null) || {
         text: draft.trim(),
         action: continueRef.current ? "continue" : "chat",
         messageId: crypto.randomUUID(),
@@ -585,15 +586,20 @@ export default function Chat({ config }: { config: PublicConfig }) {
                   />
                   {status === "waiting" ? (
                     <button
+                      key="stop"
                       type="button"
                       className="send-button"
                       aria-label="답변 받기 중단"
-                      onClick={() => controller.current?.abort()}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        controller.current?.abort();
+                      }}
                     >
                       <Square size={17} />
                     </button>
                   ) : (
                     <button
+                      key="send"
                       type="submit"
                       className="send-button"
                       disabled={!draft.trim() || conversationLimit || sessionInvalid}
