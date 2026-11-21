@@ -290,13 +290,20 @@ export class AI {
               .max(600)
               .regex(/^[^?？؟﹖\n]+$/),
           )
-          .length(1),
+          .length(1)
+          .describe(
+            "선택한 감정의 현재 크기와 사용자가 말한 장면을 함께 짚는 공감. " +
+              context.emotion.responseGuidance,
+          ),
         question: z
           .string()
           .trim()
           .min(2)
           .max(300)
-          .regex(/^[^?？؟﹖\n]+[?？]$/),
+          .regex(/^[^?？؟﹖\n]+[?？]$/)
+          .describe(
+            "그 장면에서 아직 듣지 못한 한 가지. 범위를 위 강도의 지침에 맞추고 이미 밝힌 기대는 다시 묻지 않는다.",
+          ),
       });
       const close = streamReplySchema.extend({
         mode: z.literal("close"),

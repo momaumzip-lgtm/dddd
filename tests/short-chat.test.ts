@@ -771,6 +771,7 @@ test("a later request to write can follow listening or a declined diary", () => 
 test("ordinary first disclosures need a question, including advice-only and diary-only refusals", async () => {
   for (const message of [
     "그냥 별로예요.",
+    "다들 그냥 들어가서 저만 밖에 남았어요.",
     "조언은 싫어요.",
     "기록은 안 할래요.",
     "오래 준비한 시간을 알아주길 바랐는데 친구 답이 짧아 서운했어요.",
