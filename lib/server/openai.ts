@@ -106,14 +106,23 @@ export class AI {
       throw error;
     }
   }
-  async moderate(text: string) {
+  private async moderations(input: string | string[]) {
     const response = await this.request((signal) =>
-      this.client.moderations.create({ model: "omni-moderation-latest", input: text }, { signal }),
+      this.client.moderations.create({ model: "omni-moderation-latest", input }, { signal }),
     );
-    const result = moderationSchema.safeParse(response.results?.[0]);
+    const result = z
+      .array(moderationSchema)
+      .length(typeof input === "string" ? 1 : input.length)
+      .safeParse(response.results);
     if (!result.success)
       throw new AppError(502, "MODERATION", "안전 검수 결과를 확인하지 못했어요.");
     return result.data;
+  }
+  async moderate(text: string) {
+    return (await this.moderations(text))[0];
+  }
+  async moderateOutputs(texts: string[]) {
+    return (await this.moderations(texts)).map((result) => result.flagged);
   }
   private async structured<T extends z.ZodType>(
     schema: T,

@@ -30,6 +30,7 @@ export type StreamContext = {
   previousSafety: Safety;
 };
 export interface StreamingProvider {
+  moderateOutputs(texts: string[]): Promise<boolean[]>;
   checkAttribution: Parameters<typeof preserveAttribution>[2];
   moderate(text: string): Promise<{ flagged: boolean; categories: unknown }>;
   classify(
@@ -173,6 +174,15 @@ export async function runStreamingChat(
       generationStartedMs = genStart - started;
       let suppressed = false;
       const received: string[] = [];
+      const outputFlags = new Map<string, boolean>();
+      const flagged = async (text: string) => {
+        const known = outputFlags.get(text);
+        if (known !== undefined) return known;
+        const start = performance.now();
+        const check = await ai.moderate(text);
+        outputCheckMs += performance.now() - start;
+        return check.flagged;
+      };
       let result = await ai.streamReply(
         messages,
         {
@@ -228,14 +238,21 @@ export async function runStreamingChat(
         if (plan.forceComplete && result.mode === "continue")
           throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
         const reviewStart = performance.now();
-        result = await preserveAttribution(
-          messages,
-          result,
-          async (statements, fields, diaryIndex, verify) => {
+        // Review cumulative text and the diary in one request. A subsequent edit or
+        // filter changes the cache key, so only the exact reviewed text can be reused.
+        const candidates = result.sentences.map((_, i) =>
+          result.sentences.slice(0, i + 1).join(" "),
+        );
+        if (result.diaryDraft) candidates.push(result.diaryDraft);
+        const [verified, flags] = await Promise.all([
+          preserveAttribution(messages, result, async (statements, fields, diaryIndex, verify) => {
             await slot.extra();
             return ai.checkAttribution(statements, fields, diaryIndex, verify);
-          },
-        );
+          }),
+          ai.moderateOutputs(candidates),
+        ]);
+        result = verified;
+        candidates.forEach((text, i) => outputFlags.set(text, flags[i]));
         outputCheckMs += performance.now() - reviewStart;
         for (let sentence of result.sentences) {
           const selected = selectSentences(
@@ -268,10 +285,7 @@ export async function runStreamingChat(
               "QUESTION",
               "추가 답변을 요구하지 않는 정리를 완성하지 못했어요. 다시 요청할 수 있어요.",
             );
-          const checkStart = performance.now();
-          const checked = await ai.moderate((body ? body + " " : "") + sentence);
-          outputCheckMs += performance.now() - checkStart;
-          if (checked.flagged)
+          if (await flagged((body ? body + " " : "") + sentence))
             throw new AppError(
               502,
               "OUTPUT_SAFETY",
@@ -323,8 +337,7 @@ export async function runStreamingChat(
             "DRAFT_SOURCE",
             "기록에 담을 표현을 확인하지 못했어요. 다시 요청해 주세요.",
           );
-        const reviewed = await ai.moderate(result.diaryDraft);
-        if (reviewed.flagged)
+        if (await flagged(result.diaryDraft))
           throw new AppError(502, "OUTPUT_SAFETY", "기록 초안을 확인하지 못했어요.");
         diaryDraft = result.diaryDraft;
         if (!body) publish(deferredSummary || diaryDraft);

@@ -51,6 +51,7 @@ function provider(mode = "continue"): {
     calls,
     ai: {
       checkAttribution: async () => ({ edits: [] }),
+      moderateOutputs: async (texts) => texts.map(() => false),
       moderate: async () => ({ flagged: false, categories: {} }),
       classify: async () => {
         throw Error("ordinary turns must not invoke routing");
@@ -796,6 +797,15 @@ test("only the reviewed action reaches the conversation, including its streamed 
     return reply;
   };
   const visible: string[] = [];
+  const checked: string[] = [];
+  p.moderateOutputs = async (texts) => {
+    assert.deepEqual(texts, [sentences[0], sentences.join(" ")]);
+    return texts.map(() => false);
+  };
+  p.moderate = async (text) => {
+    checked.push(text);
+    return { flagged: false, categories: {} };
+  };
   let checks = 0;
   p.checkAttribution = async (source, fields) => {
     checks++;
@@ -814,6 +824,8 @@ test("only the reviewed action reaches the conversation, including its streamed 
   assert.equal(visible.join(""), result.body);
   assert.match(result.body, /직접 고르신/);
   assert.doesNotMatch(JSON.stringify(result.history), /함께 고른/);
+  assert.ok(checked.includes("직접 고르신 책을 또 읽자니 기쁘셨겠어요."));
+  assert.ok(checked.includes(result.body));
 });
 
 test("a diary edit requires evidence from the user and a successful second review", async () => {

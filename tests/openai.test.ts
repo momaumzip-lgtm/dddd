@@ -208,6 +208,24 @@ test("SDK rejection, truncated output, malformed JSON and invalid typed fields n
     assert.doesNotMatch(result.body, /발표가 마음처럼/);
   }
 });
+test("output moderation matches each decision in order and rejects an incomplete batch", async () => {
+  process.env.OPENAI_API_KEY = "offline-http-stream-test";
+  const texts = ["첫 문장.", "첫 문장. 다음 문장."];
+  const results = [
+    { flagged: false, categories: {} },
+    { flagged: true, categories: {} },
+  ];
+  const ai = new AI("gpt-6-luna", 1000, {
+    fetch: async (_url, init) => {
+      assert.deepEqual(JSON.parse(String(init?.body)).input, texts);
+      return json({ results });
+    },
+  });
+  assert.deepEqual(await ai.moderateOutputs(texts), [false, true]);
+  results.pop();
+  await assert.rejects(ai.moderateOutputs(texts), /안전 검수/);
+});
+
 test("malformed moderation and rejected, unknown or contradictory audit verdicts fail closed", async () => {
   for (const mode of ["moderation", "audit", "rejected", "unknown", "contradictory"]) {
     const f = fixture();

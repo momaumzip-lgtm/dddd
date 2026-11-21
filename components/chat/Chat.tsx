@@ -51,9 +51,10 @@ async function openSession(signal: AbortSignal): Promise<Session> {
 export default function Chat({ config }: { config: PublicConfig }) {
   const [started, setStarted] = useState(false),
     [emotion, setEmotion] = useState<EmotionSelection | null>(null),
-    [complete, setComplete] = useState(false),
+    [completion, setCompletion] = useState<"open" | "local" | "confirmed">("open"),
     [diaries, setDiaries] = useState<Record<number, string>>({}),
     [streamText, setStreamText] = useState("");
+  const complete = completion !== "open";
   const receipt = useRef<{
     data: CompletedChat;
     active: Session;
@@ -105,7 +106,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setStarted(false);
     setEmotion(null);
     emotionRef.current = null;
-    setComplete(false);
+    setCompletion("open");
     setDiaries({});
     setStreamText("");
     continueRef.current = false;
@@ -292,7 +293,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
       if (emotionRef.current?.version === selectedVersion)
         selectEmotion(emotionSelectionSchema.parse(data.emotion));
       performance.mark("chat-done:" + requestId);
-      setComplete(data.completed);
+      setCompletion(data.completed ? "confirmed" : "open");
       const note = data.diaryDraft;
       if (note) setDiaries((previous) => ({ ...previous, [baseHistory.length + 1]: note }));
       continueRef.current = false;
@@ -569,23 +570,27 @@ export default function Chat({ config }: { config: PublicConfig }) {
                     <button
                       type="button"
                       className="continue-chat secondary"
-                      onClick={() =>
+                      onClick={() => {
+                        if (diaries[history.length - 1]) {
+                          setCompletion("local");
+                          setSurveyInvite(true);
+                          return;
+                        }
                         void send({
                           action: "summary",
                           text: "지금까지 이야기한 내용으로 정리해 주세요.",
-                        })
-                      }
+                        });
+                      }}
                     >
-                      지금 정리하기
+                      {diaries[history.length - 1] ? "여기서 마치기" : "지금 정리하기"}
                     </button>
                   )}
                 {complete && !help && (
                   <button
                     className="continue-chat secondary"
                     onClick={() => {
-                      setComplete(false);
-
-                      continueRef.current = true;
+                      continueRef.current = completion === "confirmed";
+                      setCompletion("open");
                       setSurveyInvite(false);
                       requestAnimationFrame(() => input.current?.focus());
                     }}
