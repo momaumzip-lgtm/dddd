@@ -252,11 +252,28 @@ export class AI {
       const refusal = streamReplySchema.extend({ mode: z.literal("refusal") });
       const ongoing = streamReplySchema.extend({
         mode: z.literal("continue"),
-        sentences: z.array(z.string().min(1).max(600)).min(1).max(2),
+        sentences: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .max(600)
+              .regex(/^[^?？؟﹖\n]*[?？؟﹖]?$/),
+          )
+          .min(1)
+          .max(2),
       });
       const close = streamReplySchema.extend({
         mode: z.literal("close"),
-        sentences: z.array(z.string().min(1).max(600)).length(1),
+        sentences: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .max(600)
+              .regex(/^[^?？؟﹖\n]*$/),
+          )
+          .length(1),
       });
       const replies = z.discriminatedUnion("mode", [
         safety,

@@ -44,6 +44,31 @@ export interface StreamingProvider {
     onSentence: (text: string, header: { mode: string; safety: string }) => Promise<void>,
   ): Promise<StreamReply>;
 }
+const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
+function selectSentences(text: string, allowQuestion: boolean) {
+  const kept: string[] = [];
+  let asked = false;
+  for (const part of sentenceBoundaries.segment(text)) {
+    const sentence = part.segment.trim();
+    if (!sentence) continue;
+    const marks = sentence.match(/[?？؟﹖]/g)?.length ?? 0;
+    const question =
+      marks > 0 ||
+      /(?:나요|까요|습니까|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(sentence);
+    if (question) {
+      if (
+        !allowQuestion ||
+        asked ||
+        marks > 1 ||
+        /그리고|또한|무엇.*어떻|어떤.*왜|인지.*인지/.test(sentence)
+      )
+        continue;
+      asked = true;
+    }
+    kept.push(sentence);
+  }
+  return { text: kept.join(" "), asked };
+}
 export async function runStreamingChat(
   args: {
     sid: string;
@@ -128,6 +153,7 @@ export async function runStreamingChat(
     } else if (!body) {
       const genStart = performance.now();
       let suppressed = false;
+      const received: string[] = [];
       const result = await ai.streamReply(
         messages,
         {
@@ -140,6 +166,7 @@ export async function runStreamingChat(
           previousSafety: safety,
         },
         async (sentence, header) => {
+          received.push(sentence);
           if (modelFirstMs === undefined) modelFirstMs = performance.now() - started;
           const h = streamReplySchema.pick({ mode: true, safety: true }).parse(header);
           mode = h.mode;
@@ -159,26 +186,13 @@ export async function runStreamingChat(
           }
           if (plan.forceComplete && h.mode === "continue")
             throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
-          const isQuestion =
-            /[?？؟﹖]|(?:나요|까요|습니까|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
-              sentence,
-            );
-          if (isQuestion) questions += Math.max(1, (sentence.match(/[?？؟﹖]/g) || []).length);
-          if (
-            isQuestion &&
-            (questions > 1 || h.mode !== "continue" || plan.listening || plan.forceComplete)
-          )
-            throw new AppError(
-              502,
-              "QUESTION",
-              "질문 없는 정리를 완성하지 못했어요. 다시 요청할 수 있어요.",
-            );
-          if (isQuestion && /그리고|또한|무엇.*어떻|어떤.*왜|인지.*인지/.test(sentence))
-            throw new AppError(
-              502,
-              "QUESTION",
-              "질문을 간단히 정리하지 못했어요. 다시 요청할 수 있어요.",
-            );
+          const selected = selectSentences(
+            sentence,
+            h.mode === "continue" && !plan.listening && questions === 0,
+          );
+          if (!selected.text) return;
+          sentence = selected.text;
+          if (selected.asked) questions++;
           if (
             /(?:당신은|당신이|사용자는).{0,20}(?:우울증|망상장애|성격장애)(?:입니다|이에요|예요)|(?:복용량|용량).{0,12}(?:늘리|줄이|증량|중단)|(?:자살|자해).{0,12}(?:방법은|하려면)/.test(
               sentence,
@@ -211,9 +225,28 @@ export async function runStreamingChat(
         },
       );
       generationMs = performance.now() - genStart;
-      if (!suppressed && body !== result.sentences.join(" "))
+      if (
+        !suppressed &&
+        (received.length !== result.sentences.length ||
+          received.some((sentence, i) => sentence !== result.sentences[i]))
+      )
         throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
       mode = result.mode;
+      if (!body) {
+        if (mode === "continue")
+          publish(
+            plan.listening
+              ? "천천히 이어서 들을게요."
+              : "마음에 남은 부분부터 이어서 들려주셔도 좋아요.",
+          );
+        else if (mode === "close") publish("오늘 이야기는 여기에서 마칠게요.");
+        else if (mode === "complete" && !result.diaryDraft)
+          throw new AppError(
+            502,
+            "QUESTION",
+            "질문 없는 정리를 완성하지 못했어요. 다시 요청할 수 있어요.",
+          );
+      }
       if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
         const quote = result.sourceQuote?.trim();
         if (!quote || !messages.some((m) => m.role === "user" && m.content.includes(quote)))
@@ -226,6 +259,7 @@ export async function runStreamingChat(
         if (reviewed.flagged)
           throw new AppError(502, "OUTPUT_SAFETY", "기록 초안을 확인하지 못했어요.");
         diaryDraft = result.diaryDraft;
+        if (!body) publish(diaryDraft);
       }
     }
     const progress: Progress =

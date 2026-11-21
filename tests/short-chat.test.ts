@@ -675,3 +675,21 @@ test("declining a diary closes without a writing invitation and still allows the
   assert.equal(r.diaryDraft, null);
   assert.ok(!r.body.includes(JOURNAL_CLOSING));
 });
+
+test("an extra question cannot discard an already useful reflection or trigger paid regeneration", async () => {
+  const p = provider();
+  p.ai.streamReply = async (_m, _c, publish) => {
+    const r = {
+      mode: "continue" as const,
+      safety: "normal" as const,
+      sentences: ["친구의 답을 기다렸군요.", "어떤 말을 바랐나요? 왜 그렇게 생각하셨나요?"],
+    };
+    for (const t of r.sentences) await publish(t, { mode: r.mode, safety: r.safety });
+    return r;
+  };
+  const r = await runStreamingChat(args(), new Gate(new LuaStore(), cap), p.ai, () => {});
+  assert.ok(r.body.includes("친구의 답을 기다렸군요."));
+  assert.ok(!r.body.includes("왜 그렇게"));
+  assert.equal(r.progress.questions, 1);
+  assert.equal(r.progress.completed, false);
+});
