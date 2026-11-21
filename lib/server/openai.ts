@@ -244,7 +244,14 @@ export class AI {
       const singleRequested = /한\s*(?:문장|줄)(?:으로|로|만)/.test(input.at(-1)?.content ?? "");
       const complete = streamReplySchema.extend({
         mode: z.literal("complete"),
-        sourceQuote: z.string().trim().min(1).max(200),
+        sourceQuote: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .describe(
+            "사용자가 그때의 반응이나 바람을 말한 짧은 구절을 그대로 복사한다. 조사와 어미도 바꾸지 않는다. 요약은 sentences에만 쓴다.",
+          ),
         diaryDraft: z
           .string()
           .trim()
@@ -278,7 +285,7 @@ export class AI {
               .min(1)
               .max(200)
               .describe(
-                "사용자 자신이 택한 다른 시각·태도·선택을 보여주는 정확한 원문. 사건이나 감정 설명만 있으면 continue.",
+                "사용자가 택한 시각이나 행동이 담긴 연속된 구절을 그대로 복사한다. sourceQuote와 별개여야 한다. 새 선택을 뒷받침하는 원문이 없으면 continue.",
               ),
           });
       const safety = streamReplySchema.extend({ mode: z.literal("safety") });
@@ -308,7 +315,9 @@ export class AI {
           )
           .length(1)
           .describe(
-            "사용자가 직접 말한 장면에 대한 공감 평서문 하나. 질문은 question 필드에만 쓴다. " +
+            (context.emotion.category === "positive"
+              ? "좋았던 장면에서 누구의 어떤 행동이 반가웠는지 한 가지만 반긴다. ‘내가’는 사용자다. 여러 사람의 행동을 한 수식절에 몰아 쓰다 주어를 뒤바꾸지 않는다. "
+              : "사용자가 직접 말한 장면에 대한 공감 평서문 하나. 질문은 question 필드에만 쓴다. ") +
               context.emotion.responseGuidance,
           ),
         question: z
@@ -316,9 +325,15 @@ export class AI {
           .trim()
           .min(2)
           .max(300)
-          .regex(/^[^?？؟﹖\n]+[?？]$/)
+          .regex(
+            context.emotion.category === "positive"
+              ? /^(?:어떤|어느|어디|언제|누구|무슨|무엇|뭐|어떻게|어땠|가장|특히)[^?？؟﹖,，\n]*(?:나요|까요|세요|어요|예요|에요|죠)\?$/
+              : /^[^?？؟﹖\n]+[?？]$/,
+          )
           .describe(
-            "사용자가 이미 밝힌 내용은 받아들이고, 아직 말하지 않은 한 가지만 묻는다. 겪은 부당한 대우가 분명하면 경위·증거·가해자의 의도를 캐묻지 말고 그때 원했던 대우나 지금 필요한 도움 중 하나를 짧게 묻는다.",
+            context.emotion.category === "positive"
+              ? "좋았던 경험에서 아직 듣지 못한 부분을 세다섯 어절로 묻는다. 예를 들어 ‘어느 대목이 기억에 남았나요?’처럼 질문 자체는 간단히 쓴다. 이미 밝힌 사실이나 감정을 확인하는 질문, 특정 반응이 있었다고 전제하는 질문은 피한다."
+              : "사용자가 이미 밝힌 내용은 받아들이고, 아직 말하지 않은 한 가지만 묻는다. 겪은 부당한 대우가 분명하면 경위·증거·가해자의 의도를 캐묻지 말고 그때 원했던 대우나 지금 필요한 도움 중 하나를 짧게 묻는다.",
           ),
       });
       const close = streamReplySchema.extend({

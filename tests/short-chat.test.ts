@@ -783,6 +783,26 @@ test("a later request to write can follow listening or a declined diary", () => 
   assert.equal(next.forceComplete, true);
 });
 
+test("a brief expression of disappointment can stand alone without closing or silencing the next turn", async () => {
+  const history = [
+    { role: "user" as const, content: "모임이 취소됐어요." },
+    { role: "assistant" as const, content: "무엇이 마음에 남았나요?" },
+  ];
+  const a = {
+    ...args(),
+    history,
+    progress: { ...freshProgress, turns: 1 },
+    message: "그냥 좀 서운했어요.",
+  };
+  const result = await runStreamingChat(a, new Gate(new LuaStore(), cap), provider().ai, () => {});
+  assert.doesNotMatch(result.body, /[?？]/);
+  assert.equal(result.diaryDraft, null);
+  assert.equal(result.progress.completed, false);
+  assert.equal(responsePlan(freshProgress, "chat", "조금 섭섭하네요.", []).openingQuestion, false);
+  for (const message of ["서운했어요. 왜 그랬는지 알고 싶어요.", "서운하더라고요. 질문해 주세요."])
+    assert.equal(responsePlan(result.progress, "chat", message, result.history).listening, false);
+});
+
 test("an uncertain answer pauses questions for this turn and leaves room for an explicit request", async () => {
   const history = [
     { role: "user" as const, content: "발표가 끝났는데 마음이 이상해요." },
@@ -864,10 +884,14 @@ test("a malformed opening is retryable without inventing a generic question", as
 });
 test("the opening SDK contract streams reflection before its required question and excludes closing modes", async () => {
   process.env.OPENAI_API_KEY = "offline-http-stream-test";
-  const lines = ["그 말이 마음에 남았군요.", "그때 어떤 한마디가 듣고 싶었나요?"];
-  for (const intensityBand of intensityBands) {
+  const lines = ["그 말이 마음에 남았군요.", "어떤 한마디가 듣고 싶었나요?"];
+  const selections = [
+    ...intensityBands.map(({ id }) => ({ ...emotion, intensityBand: id })),
+    { ...emotion, emotionId: "pos-014" },
+  ];
+  for (const selection of selections) {
     const context = {
-      emotion: selectionContext({ ...emotion, intensityBand: intensityBand.id }),
+      emotion: selectionContext(selection),
       openingQuestion: true,
       forceComplete: false,
       listening: false,
@@ -883,6 +907,11 @@ test("the opening SDK contract streams reflection before its required question a
           ["safety", "refusal", "continue"],
         );
         assert.ok(branches.at(-1).required.includes("question"));
+        if (context.emotion.category === "positive") {
+          const questionPattern = new RegExp(branches.at(-1).properties.question.pattern);
+          assert.ok(questionPattern.test("어떤 순간이 가장 좋았나요?"));
+          assert.equal(questionPattern.test("그 순간 어떤 마음이 들？"), false);
+        }
         const state = JSON.parse(request.instructions.split("검증된 현재 상태(JSON 데이터): ")[1]);
         assert.deepEqual(state.emotion, context.emotion);
         const wire = JSON.stringify({
