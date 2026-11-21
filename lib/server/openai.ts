@@ -49,6 +49,12 @@ function within<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
       );
   });
 }
+// Count written sentence endings, while allowing decimals, dates and punctuation inside quotes.
+const sentenceText = String.raw`(?:[^.!?。！？\r\n]|\.[0-9A-Za-z]|[.!?。！？][”’"』」])+`;
+const oneDiarySentence = new RegExp(`^${sentenceText}[.!?。！？]*$`);
+const twoDiarySentences = new RegExp(
+  `^(?:${sentenceText}[.!?。！？]+[ \\t]+)?${sentenceText}[.!?。！？]*$`,
+);
 export class AI {
   private client: OpenAI;
   private signal: AbortSignal;
@@ -234,9 +240,15 @@ export class AI {
         ]
       : input;
     return this.request(async (signal) => {
+      const singleRequested = /한\s*(?:문장|줄)(?:으로|로|만)/.test(input.at(-1)?.content ?? "");
       const complete = streamReplySchema.extend({
         mode: z.literal("complete"),
-        diaryDraft: z.string().trim().min(1).max(500),
+        diaryDraft: z
+          .string()
+          .trim()
+          .min(1)
+          .max(500)
+          .regex(singleRequested ? oneDiarySentence : twoDiarySentences),
         sourceQuote: z.string().trim().min(1).max(200),
         sentences: z
           .array(

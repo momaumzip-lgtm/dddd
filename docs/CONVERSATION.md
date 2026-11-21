@@ -17,3 +17,9 @@
 로그는 요청 ID·모델·시간·토큰·오류 코드만 기록합니다. 실제 입력·답변·감정 선택은 로그나 분석 도구에 보내지 않습니다. 브라우저 performance mark도 요청별 시간만 담습니다. HTTP 접수·서버 시간·첫 문장·브라우저 첫 표시·전체 완료를 구별하며, 소표본을 안정적인 운영 p95로 해석하지 않습니다.
 
 참고: [응답 지연](https://developers.openai.com/api/docs/guides/latency-optimization), [대화 상태](https://developers.openai.com/api/docs/guides/conversation-state), [스트리밍](https://developers.openai.com/api/docs/guides/streaming-responses), [구조화 출력](https://developers.openai.com/api/docs/guides/structured-outputs), [Responses](https://developers.openai.com/api/reference/resources/responses/methods/create), [오류](https://developers.openai.com/api/docs/guides/error-codes).
+
+## 대화 품질 검수
+
+운영 지침은 사용자가 구별한 사건의 초점과 감정을 후속 질문·기록까지 유지합니다. 이미 들은 답을 다시 묻지 않고 구체적인 도움에는 먼저 답합니다. 긍정적인 경험과 복합 감정을 하나의 원인으로 단정하지 않습니다. 사용자가 듣기만 원했다가 기록을 요청하면 최신 의사를 적용합니다.
+
+프롬프트 비교에서는 합성 발화, 이전 대화, 모델, 강도, 상태 및 출력 형식을 맞춥니다. 응답의 출처를 가리고 맥락·질문·자연스러움·공감·발견·정정·기록·호흡을 평가한 뒤 출처를 공개합니다. 적용되지 않는 항목은 점수에서 제외합니다. 없는 원인의 단정, 정정 무시, 미확인 해석을 자기 기록에 넣는 경우는 점수와 별도로 실패로 기록합니다.

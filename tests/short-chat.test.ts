@@ -572,16 +572,53 @@ test("receipt endpoint rejects missing identity, another session, invalid fields
 });
 test("production response schema accepts a one-line completion and rejects a multi-line completion", async () => {
   process.env.OPENAI_API_KEY = "offline-http-stream-test";
-  for (const sentences of [
-    ["핵심 생각을 간단히 정리했어요."],
-    ["핵심 생각을 정리했어요.", "추가 문장이에요."],
+  const summary = ["핵심 생각을 정리했어요."];
+  const record = "나는 노력도 알아주길 바랐다.";
+  for (const { sentences, diaryDraft, message, valid } of [
+    { sentences: summary, diaryDraft: record, message: "정리해 주세요.", valid: true },
+    {
+      sentences: [...summary, "추가 문장이에요."],
+      diaryDraft: record,
+      message: "정리해 주세요.",
+      valid: false,
+    },
+    {
+      sentences: summary,
+      diaryDraft: "1.5km를 내 속도로 걸었다.",
+      message: "한 문장으로 기록해 주세요.",
+      valid: true,
+    },
+    {
+      sentences: summary,
+      diaryDraft: record + " 조금 서운했다.",
+      message: "한 문장으로 기록해 주세요.",
+      valid: false,
+    },
+    {
+      sentences: summary,
+      diaryDraft: record + " 조금 서운했다.",
+      message: "정리해 주세요.",
+      valid: true,
+    },
+    {
+      sentences: summary,
+      diaryDraft: record + " 조금 서운했다. 그게 내 마음이다.",
+      message: "정리해 주세요.",
+      valid: false,
+    },
+    {
+      sentences: summary,
+      diaryDraft: "나는 걸었다.내 속도가 좋았다.",
+      message: "한 문장으로 기록해 주세요.",
+      valid: false,
+    },
   ]) {
     const wire = JSON.stringify({
       reply: {
         mode: "complete",
         safety: "normal",
         sentences,
-        diaryDraft: "나는 노력도 알아주길 바랐다.",
+        diaryDraft,
         sourceQuote: "노력도 알아주길",
       },
     });
@@ -601,7 +638,7 @@ test("production response schema accepts a one-line completion and rejects a mul
         ),
     });
     const result = ai.streamReply(
-      [{ role: "user", content: "정리해 주세요." }],
+      [{ role: "user", content: message }],
       {
         emotion: selectionContext(emotion),
         forceComplete: true,
@@ -612,7 +649,7 @@ test("production response schema accepts a one-line completion and rejects a mul
       },
       async () => {},
     );
-    if (sentences.length === 1) assert.equal((await result).sentences.length, 1);
+    if (valid) assert.equal((await result).sentences.length, 1);
     else await assert.rejects(result);
   }
 });
@@ -692,4 +729,27 @@ test("an extra question cannot discard an already useful reflection or trigger p
   assert.ok(!r.body.includes("왜 그렇게"));
   assert.equal(r.progress.questions, 1);
   assert.equal(r.progress.completed, false);
+});
+
+test("event contrasts preserve the selection; an explicit comparison updates only the named emotion", () => {
+  const initial = { ...emotion, intensityBand: "60_80" as const };
+  assert.deepEqual(
+    correctedSelection(initial, "채택 여부가 아니라 말을 끊은 상황에서 서운함이 남았어요."),
+    initial,
+  );
+  const fixed = correctedSelection(
+    initial,
+    "채택 안 된 게 문제가 아니라 말을 끊었어요. 짜증보다는 서운함에 가까워요.",
+  );
+  assert.equal(fixed.emotionId, "neg-056");
+  assert.equal(fixed.intensityBand, "unknown");
+  assert.deepEqual(correctedSelection(fixed, "화가 아니라 서운해"), fixed);
+});
+test("a later request to write can follow listening or a declined diary", () => {
+  const history = [{ role: "user", content: "지금은 기록하고 싶지 않고 그냥 들어줘." }];
+  assert.equal(responsePlan(freshProgress, "chat", "응", history).skipDiary, true);
+  const next = responsePlan(freshProgress, "chat", "이제는 한 문장으로 기록하고 싶어요.", history);
+  assert.equal(next.listening, false);
+  assert.equal(next.skipDiary, false);
+  assert.equal(next.forceComplete, true);
 });

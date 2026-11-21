@@ -204,15 +204,25 @@ export function searchEmotions(query: string, category = "all") {
   );
 }
 export function correctedSelection(value: EmotionSelection, message: string): EmotionSelection {
-  const tail = message
-    .split(/아니라|아니고/)
+  // A contrast about the event (rather than the feeling) must not change the picker.
+  const contrasts = message
+    .split(/아니라|아니고|보다는/)
     .slice(1)
-    .join(" ");
-  if (!tail) return value;
-  const found = emotionCatalog.find((e) =>
-    [e.label, ...e.aliases].some((s) => s.length >= 2 && tail.includes(s)),
-  );
-  return found
+    .reverse();
+  const found = contrasts.flatMap((part) => {
+    const target = part
+      .replace(/^[,\s]*(?:(?:사실은?|오히려|그냥|지금은|좀 더|조금 더)\s*)*/, "")
+      .trimStart();
+    return emotionCatalog.filter((e) =>
+      [e.label, ...e.aliases].some(
+        (label) =>
+          label.length >= 2 &&
+          target.startsWith(label) &&
+          !/^(?:이|은|는|가|을|를)?\s*(?:아니|없|느끼지 않)/.test(target.slice(label.length)),
+      ),
+    );
+  })[0];
+  return found && found.id !== value.emotionId
     ? {
         ...value,
         emotionId: found.id,
