@@ -3,6 +3,7 @@ import type { Message } from "../config";
 import { DIARY_INVITATION, freshProgress, responsePlan, type Progress } from "../conversation";
 import { correctedSelection, selectionContext, type EmotionSelection } from "../emotions";
 import { AppError } from "./errors";
+import { preserveAttribution } from "./attribution";
 import type { Gate } from "./limits";
 import type { Safety } from "./schemas";
 import { urgent, retainRisk, safetyReply, safetyText, hasSafetyClarification } from "./safety";
@@ -29,6 +30,7 @@ export type StreamContext = {
   previousSafety: Safety;
 };
 export interface StreamingProvider {
+  checkAttribution: Parameters<typeof preserveAttribution>[2];
   moderate(text: string): Promise<{ flagged: boolean; categories: unknown }>;
   classify(
     messages: Message[],
@@ -171,7 +173,7 @@ export async function runStreamingChat(
       generationStartedMs = genStart - started;
       let suppressed = false;
       const received: string[] = [];
-      const result = await ai.streamReply(
+      let result = await ai.streamReply(
         messages,
         {
           emotion: selectionContext(emotion),
@@ -187,6 +189,8 @@ export async function runStreamingChat(
           received.push(sentence);
           if (modelFirstMs === undefined) modelFirstMs = performance.now() - started;
           const h = streamReplySchema.pick({ mode: true, safety: true }).parse(header);
+          if (mode !== "continue" && h.mode !== mode)
+            throw new AppError(502, "STREAM_FORMAT", "답변 상태를 확인하지 못했어요.");
           mode = h.mode;
           safety = retainRisk(safety, h.safety);
           if (safety !== "normal" || h.mode === "safety") {
@@ -200,26 +204,49 @@ export async function runStreamingChat(
           if (h.mode === "refusal") {
             if (!suppressed) publish(safetyText.refusal);
             suppressed = true;
-            return;
           }
-          if (
-            plan.firstInput &&
-            !plan.forceComplete &&
-            (plan.openingQuestion || plan.listening) &&
-            h.mode !== "continue"
-          )
-            throw new AppError(502, "MODE", "첫 답변을 이어가지 못했어요. 다시 요청해 주세요.");
-          if (plan.forceComplete && h.mode === "continue")
-            throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
+        },
+        () => {
+          modelFirstTextMs = performance.now() - started;
+        },
+      );
+      generationMs = performance.now() - genStart;
+      if (!suppressed) {
+        if (
+          mode !== result.mode ||
+          received.length !== result.sentences.length ||
+          received.some((sentence, i) => sentence.trim() !== result.sentences[i].trim())
+        )
+          throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
+        if (
+          plan.firstInput &&
+          !plan.forceComplete &&
+          (plan.openingQuestion || plan.listening) &&
+          result.mode !== "continue"
+        )
+          throw new AppError(502, "MODE", "첫 답변을 이어가지 못했어요. 다시 요청해 주세요.");
+        if (plan.forceComplete && result.mode === "continue")
+          throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
+        const reviewStart = performance.now();
+        result = await preserveAttribution(
+          messages,
+          result,
+          async (statements, fields, diaryIndex, verify) => {
+            await slot.extra();
+            return ai.checkAttribution(statements, fields, diaryIndex, verify);
+          },
+        );
+        outputCheckMs += performance.now() - reviewStart;
+        for (let sentence of result.sentences) {
           const selected = selectSentences(
             sentence,
-            h.mode === "continue" &&
+            result.mode === "continue" &&
               !plan.listening &&
               questions === 0 &&
               (!plan.openingQuestion || Boolean(body)),
-            h.mode === "complete",
+            result.mode === "complete",
           );
-          if (!selected.text) return;
+          if (!selected.text) continue;
           sentence = selected.text;
           if (selected.asked) questions++;
           if (
@@ -233,7 +260,7 @@ export async function runStreamingChat(
               "답변의 안전을 확인하지 못했어요. 다시 요청할 수 있어요.",
             );
           if (
-            h.mode === "complete" &&
+            result.mode === "complete" &&
             /(?:알려|말씀해).{0,8}(?:주면|주시면|주세요|주실|줄래)/.test(sentence)
           )
             throw new AppError(
@@ -250,20 +277,10 @@ export async function runStreamingChat(
               "OUTPUT_SAFETY",
               "답변의 안전을 확인하지 못했어요. 도움 받기를 이용할 수 있어요.",
             );
-          if (h.mode === "complete" && !plan.forceComplete) deferredSummary = sentence;
+          if (result.mode === "complete" && !plan.forceComplete) deferredSummary = sentence;
           else publish(sentence);
-        },
-        () => {
-          modelFirstTextMs = performance.now() - started;
-        },
-      );
-      generationMs = performance.now() - genStart;
-      if (
-        !suppressed &&
-        (received.length !== result.sentences.length ||
-          received.some((sentence, i) => sentence.trim() !== result.sentences[i].trim()))
-      )
-        throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
+        }
+      }
       mode = result.mode;
       if (mode === "complete" && !plan.forceComplete) {
         const quotes = [result.sourceQuote?.trim(), result.perspectiveQuote?.trim()];

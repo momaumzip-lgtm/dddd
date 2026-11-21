@@ -11,6 +11,7 @@ import {
 } from "../lib/emotions";
 import { freshProgress, responsePlan } from "../lib/conversation";
 import { ReplyFields } from "../lib/server/stream-fields";
+import { preserveAttribution } from "../lib/server/attribution";
 import { readChatStream, chatErrorMessage, failedChatRequest } from "../lib/browser/chat-stream";
 import {
   runStreamingChat,
@@ -49,6 +50,7 @@ function provider(mode = "continue"): {
   return {
     calls,
     ai: {
+      checkAttribution: async () => ({ edits: [] }),
       moderate: async () => ({ flagged: false, categories: {} }),
       classify: async () => {
         throw Error("ordinary turns must not invoke routing");
@@ -781,6 +783,65 @@ test("a later request to write can follow listening or a declined diary", () => 
   assert.equal(next.listening, false);
   assert.equal(next.skipDiary, false);
   assert.equal(next.forceComplete, true);
+});
+
+test("only the reviewed action reaches the conversation, including its streamed text and history", async () => {
+  const p = provider().ai;
+  const a = { ...args(), message: "내가 고른 그림책을 아이가 다시 읽어 달랬어요." };
+  const sentences = ["함께 고른 책을 또 읽자니 기쁘셨겠어요.", "어느 대목이 기억에 남았나요?"];
+  p.streamReply = async (_messages, _context, emit) => {
+    const reply = { mode: "continue" as const, safety: "normal" as const, sentences };
+    for (const sentence of sentences)
+      await emit(sentence, { mode: reply.mode, safety: reply.safety });
+    return reply;
+  };
+  const visible: string[] = [];
+  let checks = 0;
+  p.checkAttribution = async (source, fields) => {
+    checks++;
+    assert.deepEqual(source, [a.message]);
+    assert.deepEqual(visible, []);
+    return {
+      edits: fields[0].includes("함께 고른")
+        ? [{ field: 0, before: "함께 고른", after: "직접 고르신", evidence: "내가 고른 그림책" }]
+        : [],
+    };
+  };
+  const result = await runStreamingChat(a, new Gate(new LuaStore(), cap), p, (d) =>
+    visible.push(d),
+  );
+  assert.equal(checks, 2);
+  assert.equal(visible.join(""), result.body);
+  assert.match(result.body, /직접 고르신/);
+  assert.doesNotMatch(JSON.stringify(result.history), /함께 고른/);
+});
+
+test("a diary edit requires evidence from the user and a successful second review", async () => {
+  const input = [
+    { role: "assistant" as const, content: "둘이 찍었네요." },
+    { role: "user" as const, content: "제가 찍고 친구가 골랐어요." },
+  ];
+  const reply = {
+    mode: "complete" as const,
+    safety: "normal" as const,
+    sentences: ["사진을 남기셨군요."],
+    diaryDraft: "우리가 찍은 사진을 친구가 골랐다.",
+  };
+  const edit = { field: 1, before: "우리가 찍은", after: "내가 찍은", evidence: "제가 찍고" };
+  const ok = await preserveAttribution(input, reply, async (_s, fs) => ({
+    edits: fs[1].includes("우리가") ? [edit] : [],
+  }));
+  assert.equal(ok.diaryDraft, "내가 찍은 사진을 친구가 골랐다.");
+  await assert.rejects(
+    preserveAttribution(input, reply, async () => ({
+      edits: [{ ...edit, evidence: "둘이 찍었네요" }],
+    })),
+    /누가 한 일/,
+  );
+  await assert.rejects(
+    preserveAttribution(input, reply, async () => ({ edits: [edit] })),
+    /누가 한 일/,
+  );
 });
 
 test("a brief expression of disappointment can stand alone without closing or silencing the next turn", async () => {
