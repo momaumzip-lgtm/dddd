@@ -1207,6 +1207,7 @@ dialog .fine-print {
     min-height: 0;
   }
   .topbar {
+    flex-wrap: wrap;
     min-height: 78px;
     padding: 12px 20px;
     gap: 8px;
@@ -1232,6 +1233,7 @@ dialog .fine-print {
     margin-top: 1px;
   }
   .topbar nav {
+    margin-left: auto;
     gap: 3px;
   }
   .quiet {
@@ -1845,4 +1847,49 @@ dialog .fine-print {
 .survey-question legend small {
   font-weight: normal;
   font-size: 0.8rem;
+}
+
+.skip-catalog:not(:focus) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.skip-catalog:focus,
+.skip-questions,
+.custom-emotion button {
+  color: var(--green);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.skip-questions {
+  font-size: 0.9375rem;
+  margin-bottom: 1rem;
+}
+.custom-emotion {
+  padding: 14px 16px 6px;
+  margin-block: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.custom-emotion label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.selection-card strong,
+.current-emotion > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.current-emotion button,
+.current-emotion small {
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .chat-card:has(> .emotion-picker) > .conversation-heading {
+    display: none;
+  }
 }

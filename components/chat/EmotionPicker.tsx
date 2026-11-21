@@ -1,9 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { audience } from "@/lib/service-info";
 import { Check } from "lucide-react";
 import {
-  emotionCatalog,
   searchEmotions,
   intensityBands,
   emotionLabel,
@@ -27,35 +26,59 @@ export default function EmotionPicker({
     [query, setQuery] = useState(""),
     [expanded, setExpanded] = useState(!value),
     [customOpen, setCustomOpen] = useState(false);
+  const search = useRef<HTMLInputElement>(null);
+  const customInput = useRef<HTMLInputElement>(null);
+  const intensity = useRef<HTMLFieldSetElement>(null);
+  const alternative = useRef<HTMLButtonElement>(null);
+  const confirmEmotion = () => {
+    setExpanded(false);
+    setCustomOpen(false);
+    requestAnimationFrame(() => intensity.current?.focus());
+  };
   const pick = (id: string) => {
     setChosen(id);
     setBand(null);
-    setExpanded(false);
-    setCustomOpen(false);
+    confirmEmotion();
   };
   const selection: EmotionSelection = {
     emotionId: chosen || "unknown",
-    customLabel: custom.trim(),
+    customLabel: chosen === "custom" ? custom.trim() : "",
     intensityBand: band || "unknown",
     version: (value?.version || 0) + 1,
   };
-  const valid = chosen !== null && band !== null && (chosen !== "custom" || !!custom.trim());
+  const valid =
+    !expanded && chosen !== null && band !== null && (chosen !== "custom" || !!custom.trim());
   const entries = searchEmotions(query, category);
   return (
     <section className="emotion-picker" aria-label="감정과 강도 선택">
-      <span className="eyebrow">나를 알아가는 짧은 시간</span>
+      <span className="eyebrow">{expanded ? "감정 선택" : "감정 강도"}</span>
       <h1>
-        지금 마음에 가까운
-        <br />
-        단어를 골라주세요
+        {expanded ? (
+          <>
+            지금 마음에 가까운
+            <br />
+            단어를 골라주세요
+          </>
+        ) : (
+          "얼마나 크게 느껴지나요?"
+        )}
       </h1>
-      <p>짧게 이야기하고 내 마음을 한두 문장으로 남겨보세요. 대화는 보통 3분 정도예요.</p>
+      {expanded && (
+        <p>AI와 짧게 이야기하고 내 마음을 한두 문장으로 남겨보세요. 대화는 보통 3분 정도예요.</p>
+      )}
       {chosen && !expanded ? (
         <div className="selection-card">
           <strong>
             <Check size={18} /> 선택한 감정: {emotionLabel(selection)}
           </strong>
-          <button onClick={() => setExpanded(true)}>다시 고르기</button>
+          <button
+            onClick={() => {
+              setExpanded(true);
+              requestAnimationFrame(() => search.current?.focus());
+            }}
+          >
+            다시 고르기
+          </button>
         </div>
       ) : (
         <>
@@ -65,7 +88,14 @@ export default function EmotionPicker({
               ["positive", "긍정 감정"],
               ["negative", "부정 감정"],
             ].map(([id, label]) => (
-              <button key={id} aria-pressed={category === id} onClick={() => setCategory(id)}>
+              <button
+                key={id}
+                aria-pressed={(query.trim() ? "all" : category) === id}
+                onClick={() => {
+                  setCategory(id);
+                  setQuery("");
+                }}
+              >
                 {label}
               </button>
             ))}
@@ -74,14 +104,18 @@ export default function EmotionPicker({
             전체 감정에서 찾기
           </label>
           <input
+            ref={search}
             id="emotion-search"
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="감정 찾기 (선택)"
+            placeholder="전체 감정에서 찾기"
             autoComplete="off"
           />
-          <div className="emotion-catalog" role="group" aria-label="감정 단어 목록" tabIndex={0}>
+          <button className="skip-catalog" onClick={() => alternative.current?.focus()}>
+            감정 목록 건너뛰기
+          </button>
+          <div className="emotion-catalog" role="group" aria-label="감정 단어 목록">
             {entries.map((e) => (
               <button
                 key={e.id}
@@ -96,16 +130,23 @@ export default function EmotionPicker({
             ))}
             {!entries.length && <p>맞는 단어가 없어요. 검색어를 지우거나 직접 적어도 괜찮아요.</p>}
           </div>
-          <p className="catalog-hint">
-            총 {emotionCatalog.length}개 · 목록을 스크롤하면 더 볼 수 있어요
+          <p className="catalog-hint" role="status">
+            {query.trim()
+              ? `전체 감정에서 찾은 단어 ${entries.length}개`
+              : `감정 단어 ${entries.length}개 · 목록을 스크롤해 더 보기`}
           </p>
           <div className="emotion-alternatives">
-            <button aria-pressed={chosen === "unknown"} onClick={() => pick("unknown")}>
+            <button
+              ref={alternative}
+              aria-pressed={chosen === "unknown"}
+              onClick={() => pick("unknown")}
+            >
               잘 모르겠어요
             </button>
             <button
               onClick={() => {
                 setCustomOpen(true);
+                requestAnimationFrame(() => customInput.current?.focus());
                 setChosen("custom");
                 setBand(null);
               }}
@@ -114,28 +155,26 @@ export default function EmotionPicker({
             </button>
           </div>
           {customOpen && (
-            <label className="custom-emotion">
-              내가 느끼는 감정
+            <div className="custom-emotion">
+              <label htmlFor="custom-label">내가 느끼는 감정</label>
               <input
+                ref={customInput}
+                id="custom-label"
                 maxLength={40}
                 value={custom}
                 onChange={(e) => setCustom(e.target.value)}
                 autoComplete="off"
               />
-              <button
-                onClick={() => {
-                  if (custom.trim()) setExpanded(false);
-                }}
-              >
+              <button type="button" disabled={!custom.trim()} onClick={confirmEmotion}>
                 이 감정 고르기
               </button>
-            </label>
+            </div>
           )}
         </>
       )}
-      {chosen && (!expanded || customOpen) && (
-        <fieldset className="intensity-picker">
-          <legend>그 일을 지금 떠올리면, 이 감정이 얼마나 크게 느껴지나요?</legend>
+      {chosen && !expanded && (
+        <fieldset className="intensity-picker" ref={intensity} tabIndex={-1}>
+          <legend className="sr-only">감정 강도 고르기</legend>
           <p>정확한 수치가 아니어도 괜찮아요. 지금 느껴지는 정도를 골라주세요.</p>
           <div className="intensity-options">
             {intensityBands.map((b) => (
@@ -155,7 +194,7 @@ export default function EmotionPicker({
       )}
       <div className="emotion-start">
         <p role="status">
-          {!chosen
+          {expanded
             ? "마음에 가까운 단어를 먼저 골라주세요."
             : band === null
               ? "강도를 고르거나 ‘잘 모르겠어요’를 선택해 주세요."

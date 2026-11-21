@@ -37,6 +37,7 @@ export default function Survey({
   onSession: (value: Session) => void;
   onClose: () => void;
 }) {
+  const consentNote = useRef<HTMLParagraphElement>(null);
   const [answers, setAnswers] = useState<SurveyDraft>({});
   const update = (change: SurveyDraft) => setAnswers((previous) => updateSurvey(previous, change));
   const [status, setStatus] = useState<"idle" | "sending" | "error" | "done">("idle"),
@@ -161,6 +162,15 @@ export default function Survey({
                 </label>
               ))}
             </fieldset>
+            {answers.entryRoute && !locked && (
+              <button
+                className="skip-questions"
+                type="button"
+                onClick={() => consentNote.current?.focus()}
+              >
+                선택 문항을 건너뛰고 제출 안내로
+              </button>
+            )}
             {surveyQuestions
               .filter((q) => visibleQuestion(q, answers))
               .map((q) => {
@@ -229,7 +239,7 @@ export default function Survey({
                 유효하며 만료된 값은 다음 요청 때 정리해요.
               </p>
             </details>
-            <p className="fine-print">
+            <p className="fine-print" ref={consentNote} tabIndex={-1}>
               제출하면 설문 답변을 Netlify Forms와 {config.recipient}의 운영 이메일에 전달하는 데
               동의해요. 두 곳에서 접수일로부터 1년간 보관한 뒤 운영자가 삭제해요. 채팅과 기록은
               첨부하지 않아요. 설문을 건너뛰어도 괜찮아요.

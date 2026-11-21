@@ -67,7 +67,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
     [acknowledged, setAcknowledged] = useState(false),
     [help, setHelp] = useState(false),
     [unread, setUnread] = useState(false);
-  const [surveyEpoch, setSurveyEpoch] = useState(0),
+  const [viewEpoch, setViewEpoch] = useState(0),
     [surveyInvite, setSurveyInvite] = useState(false);
   const [conversationLimit, setConversationLimit] = useState(false);
   const [sessionInvalid, setSessionInvalid] = useState(false);
@@ -100,7 +100,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setError("");
     setHelp(false);
     setUnread(false);
-    setSurveyEpoch((e) => e + 1);
+    setViewEpoch((e) => e + 1);
     setSurveyInvite(false);
     setConversationLimit(false);
     setSessionInvalid(false);
@@ -112,6 +112,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
   useEffect(() => {
     if (panel) {
       dialog.current?.showModal();
+      dialog.current?.scrollTo({ top: 0 });
     } else dialog.current?.close();
   }, [panel]);
   useEffect(() => {
@@ -257,7 +258,9 @@ export default function Chat({ config }: { config: PublicConfig }) {
       setSession({ ...active, token: data.token });
       setPending(null);
       setStreamText("");
-      setDraft((current) => (data.notice ? request.text : current === request.text ? "" : current));
+      setDraft((current) =>
+        data.notice ? request.text : current.trim() === request.text ? "" : current,
+      );
       setStatus("idle");
       setHelp(data.help);
       setConversationLimit(data.conversationLimit === true);
@@ -282,7 +285,17 @@ export default function Chat({ config }: { config: PublicConfig }) {
   return (
     <main ref={shell} className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label={`${config.name} 처음으로`}>
+        <a
+          className="brand"
+          href="/"
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            if (started) setPanel("reset");
+            else shell.current?.querySelector(".emotion-picker")?.scrollTo({ top: 0 });
+          }}
+          aria-label={`${config.name} 처음으로`}
+        >
           <span className="brand-icon">
             <BrandMark />
           </span>
@@ -293,10 +306,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
         </a>
         <span className="header-caption">마음에 쌓인 말을, 천천히</span>
         <nav aria-label="대화 도구">
-          <button aria-label="새 대화" onClick={() => setPanel("reset")} className="quiet">
-            <Plus size={18} />
-            <span>새 대화</span>
-          </button>
+          {started && (
+            <button aria-label="새 대화" onClick={() => setPanel("reset")} className="quiet">
+              <Plus size={18} />
+              <span>새 대화</span>
+            </button>
+          )}
           <button className="help-button" onClick={() => setPanel("help")}>
             <CircleHelp size={18} />
             <span>도움 받기</span>
@@ -352,6 +367,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
           </div>
           {!started ? (
             <EmotionPicker
+              key={viewEpoch}
               value={emotion}
               onDone={(value) => {
                 selectEmotion(value);
@@ -534,6 +550,9 @@ export default function Chat({ config }: { config: PublicConfig }) {
                   </div>
                 )}
               </div>
+              <p className="sr-only" role="status" aria-atomic="true">
+                {history.at(-1)?.role === "assistant" ? history.at(-1)?.content : ""}
+              </p>
               {unread && (
                 <button className="unread" onClick={jump}>
                   <MessageCircle size={16} />새 답변 보기
@@ -562,7 +581,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                         : "어떤 일이 있었나요? 한 문장도 괜찮아요."
                     }
                     rows={1}
-                    disabled={status === "waiting"}
+                    readOnly={status === "waiting" || sessionInvalid || conversationLimit}
                     onChange={(e) => setDraft(e.target.value)}
                     onCompositionStart={() => {
                       ime.current = true;
@@ -724,7 +743,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
           </>
         )}
         <Survey
-          key={surveyEpoch}
+          key={viewEpoch}
           visible={panel === "survey"}
           config={config.survey}
           contact={config.contact}

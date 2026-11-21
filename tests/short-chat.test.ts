@@ -99,6 +99,17 @@ test("catalog preserves all 125 unique IDs, exact categories, aliases and all se
     false,
   );
 });
+test("switching away from a custom emotion discards its text in incoming selections", () => {
+  const previous = { ...unknownEmotion, customLabel: "내가 직접 적은 마음" };
+  for (const emotionId of ["unknown", emotionCatalog[0].id]) {
+    assert.equal(emotionSelectionSchema.parse({ ...previous, emotionId }).customLabel, "");
+  }
+  assert.equal(
+    emotionSelectionSchema.parse({ ...previous, emotionId: "custom" }).customLabel,
+    previous.customLabel,
+  );
+});
+
 test("bands and unknown are categorical; corrections reset intensity and respect latest speech", () => {
   for (const intensityBand of ["0_20", "20_40", "40_60", "60_80", "80_100", "unknown"])
     assert.ok(emotionSelectionSchema.safeParse({ ...emotion, intensityBand }).success);

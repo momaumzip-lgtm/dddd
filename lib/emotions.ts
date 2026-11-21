@@ -162,7 +162,8 @@ export const emotionSelectionSchema = z
     version: z.number().int().min(0).max(10000),
   })
   .strict()
-  .refine((e) => e.emotionId !== "custom" || e.customLabel.length > 0);
+  .refine((e) => e.emotionId !== "custom" || e.customLabel.length > 0)
+  .transform((e) => (e.emotionId === "custom" ? e : { ...e, customLabel: "" }));
 export type EmotionSelection = z.infer<typeof emotionSelectionSchema>;
 export const unknownEmotion: EmotionSelection = {
   emotionId: "unknown",
