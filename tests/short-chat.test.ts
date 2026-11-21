@@ -969,3 +969,22 @@ test("immediate endings and ordinary reluctance are separate intentions", () => 
   ])
     assert.equal(responsePlan(freshProgress, "chat", value, []).forceComplete, false);
 });
+
+test("a question ending in a period in the first reflection does not repeat the dedicated question", async () => {
+  const p = provider().ai;
+  p.streamReply = async (_input, _context, emit) => {
+    const reply = {
+      mode: "continue" as const,
+      safety: "normal" as const,
+      sentences: [
+        "그 말을 직접 들으셨군요. 지금 바라는 대우는 무엇인가요.",
+        "지금 바라는 대우는 무엇인가요?",
+      ],
+    };
+    for (const text of reply.sentences)
+      await emit(text, { mode: reply.mode, safety: reply.safety });
+    return reply;
+  };
+  const r = await runStreamingChat(args(), new Gate(new LuaStore(), cap), p, () => {});
+  assert.equal(r.body, "그 말을 직접 들으셨군요. 지금 바라는 대우는 무엇인가요?");
+});

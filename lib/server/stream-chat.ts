@@ -48,16 +48,26 @@ export interface StreamingProvider {
   ): Promise<StreamReply>;
 }
 const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
-function selectSentences(text: string, allowQuestion: boolean) {
+function selectSentences(text: string, allowQuestion: boolean, diarySummary: boolean) {
   const kept: string[] = [];
   let asked = false;
   for (const part of sentenceBoundaries.segment(text)) {
     const sentence = part.segment.trim();
     if (!sentence) continue;
+    // The editor supplies its own invitation after the grounded summary.
+    if (
+      diarySummary &&
+      /(?:다이어리|일기|기록|초안).{0,28}(?:남겨|적어|써|복사해|고쳐)\s*(?:보셔도|보세요|두세요|주세요)/.test(
+        sentence,
+      )
+    )
+      continue;
     const marks = sentence.match(/[?？؟﹖]/g)?.length ?? 0;
     const question =
       marks > 0 ||
-      /(?:나요|까요|습니까|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(sentence);
+      /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
+        sentence,
+      );
     if (question) {
       if (
         !allowQuestion ||
@@ -207,6 +217,7 @@ export async function runStreamingChat(
               !plan.listening &&
               questions === 0 &&
               (!plan.openingQuestion || Boolean(body)),
+            h.mode === "complete",
           );
           if (!selected.text) return;
           sentence = selected.text;
