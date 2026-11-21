@@ -18,6 +18,25 @@ export const wantsListening = (text: string) =>
     text,
   );
 
+function onlyExpressesUncertainty(text: string) {
+  const clauses = text
+    .split(/[.!。！,\n]+/)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+  return (
+    clauses.length > 0 &&
+    clauses.every((clause) => {
+      const words = clause.replace(
+        /^(?:(?:아직|저도|그냥|잘|딱히|지금은|뭔지|그건|정확히)\s*)+/,
+        "",
+      );
+      return /^(?:모르겠(?:어(?:요)?|습니다|네요)|(?:뭐라(?:고)?\s*)?(?:말하|설명하|표현하)기\s*(?:좀\s*)?(?:어려워(?:요)?|어렵네요)|(?:기억|생각)이?\s*안\s*나(?:요)?)$/.test(
+        words,
+      );
+    })
+  );
+}
+
 export function responsePlan(
   progress: Progress,
   action: string,
@@ -67,6 +86,15 @@ export function responsePlan(
       latest,
     );
   const firstInput = action === "chat" && progress.turns === 0 && history.length === 0;
+  // Give a short "I don't know" answer room for one turn. This does not set a lasting preference.
+  const previous = history.at(-1);
+  if (
+    !forceComplete &&
+    previous?.role === "assistant" &&
+    /[?？]\s*$/.test(previous.content) &&
+    onlyExpressesUncertainty(latest)
+  )
+    listening = true;
   const openingQuestion = firstInput && !forceComplete && !listening && !asksForWording;
   return {
     current,

@@ -783,6 +783,32 @@ test("a later request to write can follow listening or a declined diary", () => 
   assert.equal(next.forceComplete, true);
 });
 
+test("an uncertain answer pauses questions for this turn and leaves room for an explicit request", async () => {
+  const history = [
+    { role: "user" as const, content: "발표가 끝났는데 마음이 이상해요." },
+    { role: "assistant" as const, content: "어떤 장면이 남았나요?" },
+  ];
+  const progress = { ...freshProgress, turns: 1, questions: 1 };
+  const a = { ...args(), history, progress, message: "모르겠어요. 딱히 뭐라고 말하기 어려워요." };
+  const p = provider();
+  const result = await runStreamingChat(a, new Gate(new LuaStore(), cap), p.ai, () => {});
+  assert.equal(p.calls[0].context.listening, true);
+  assert.equal(result.body.includes("?"), false);
+  assert.equal(result.surveyReady, false);
+  assert.equal(
+    responsePlan(result.progress, "chat", "한번 생각해 보고 싶어요.", result.history).listening,
+    false,
+  );
+  assert.equal(
+    responsePlan(progress, "chat", "모르겠어요. 어떻게 말하면 좋을까요?", history).listening,
+    false,
+  );
+  assert.equal(
+    responsePlan(progress, "chat", "잘 모르겠어요. 바로 기록해줘.", history).forceComplete,
+    true,
+  );
+});
+
 test("ordinary first disclosures need a question, including advice-only and diary-only refusals", async () => {
   for (const message of [
     "그냥 별로예요.",
