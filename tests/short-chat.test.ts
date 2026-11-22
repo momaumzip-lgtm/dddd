@@ -474,6 +474,51 @@ test("question inside a closing summary is blocked and the old history and signe
   assert.equal(emitted, "");
   assert.equal(a.progress.turns, 2);
 });
+for (const invalid of ["unsupported quote", "wrong speaker"] as const)
+  test(`manual summary retries a ${invalid} before showing text`, async () => {
+    const p = provider();
+    let attempts = 0;
+    p.ai.streamReply = async (_messages, context, publish) => {
+      assert.equal(context.manualSummary, true);
+      const first = ++attempts === 1;
+      const result = {
+        mode: "complete" as const,
+        safety: "normal" as const,
+        sentences: [
+          first
+            ? invalid === "wrong speaker"
+              ? "친구가 제가 준비한 이야기를 끝까지 들으려 하지 않았군요."
+              : "처음 정리한 문장은 보여주면 안 돼요."
+            : "친구가 이야기를 끝까지 듣지 않아서 서운하셨군요.",
+        ],
+        diaryDraft: "친구가 내 이야기를 끝까지 듣지 않아서 서운했다.",
+        sourceQuote:
+          first && invalid === "unsupported quote"
+            ? "지금까지 이야기한 내용으로 정리해 주세요."
+            : "좀 서운했어요",
+      };
+      await publish(result.sentences[0], { mode: result.mode, safety: result.safety });
+      return result;
+    };
+    const request = {
+      ...args(),
+      action: "summary",
+      message: "지금까지 이야기한 내용으로 정리해 주세요.",
+      history: [
+        { role: "user" as const, content: "친구가 이야기를 끝까지 안 들어서 좀 서운했어요." },
+      ],
+      progress: { turns: 1, questions: 1, completed: false },
+    };
+    let emitted = "";
+    const result = await runStreamingChat(request, new Gate(new LuaStore(), cap), p.ai, (text) => {
+      emitted += text;
+    });
+    assert.equal(attempts, 2);
+    assert.match(emitted, /서운하셨군요/);
+    assert.doesNotMatch(emitted, /처음 정리한 문장|제가 준비한/);
+    assert.ok(result.diaryDraft);
+    assert.equal(result.surveyReady, true);
+  });
 test("SDK treats failed, incomplete, refusal and missing terminal streams as failures", async () => {
   const context = {
     emotion: selectionContext(emotion),

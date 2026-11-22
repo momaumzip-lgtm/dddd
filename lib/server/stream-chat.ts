@@ -47,6 +47,7 @@ export type StreamContext = {
   followupQuestion?: boolean;
   openingQuestion?: boolean;
   recordCorrection?: boolean;
+  manualSummary?: boolean;
   clarifyQuestion?: boolean;
   asksForPracticalHelp?: boolean;
   reflectionStep?: Readiness["next"];
@@ -175,6 +176,9 @@ export async function runStreamingChat(
   const emotion = correctedSelection(args.emotion, args.message),
     plan = responsePlan(args.progress, args.action, args.message, args.history);
   const messages: Message[] = [...args.history, { role: "user", content: args.message }];
+  const userStory = (args.action === "summary" ? args.history : messages)
+    .filter((message) => message.role === "user")
+    .map((message) => message.content.replace(/\s/g, ""));
   let safety = retainRisk(args.safety, urgent(args.message)),
     body = "",
     diaryDraft: string | null = null,
@@ -329,9 +333,10 @@ export async function runStreamingChat(
       const finish = plan.forceComplete || reflectionStep === "diary";
       const emotionContext = selectionContext(emotion);
       const losesSpeaker = (reply: StreamReply) =>
-        plan.openingQuestion &&
-        emotionContext.category === "positive" &&
-        reply.mode === "continue" &&
+        ((plan.openingQuestion &&
+          emotionContext.category === "positive" &&
+          reply.mode === "continue") ||
+          (args.action === "summary" && (reply.mode === "complete" || reply.mode === "close"))) &&
         reply.sentences.some((sentence) =>
           /(?:^|[^가-힣])(?:제가|내가|저는|나는|제|내)\s/.test(
             sentence.replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'/g, ""),
@@ -350,6 +355,7 @@ export async function runStreamingChat(
             followupQuestion: plan.followupQuestion,
             openingQuestion: plan.openingQuestion,
             recordCorrection: plan.recordCorrection,
+            ...(args.action === "summary" ? { manualSummary: true } : {}),
             clarifyQuestion: plan.clarifyQuestion,
             asksForPracticalHelp: plan.asksForPracticalHelp,
             turn: plan.current.turns + 1,
@@ -456,6 +462,24 @@ export async function runStreamingChat(
             "$1$2",
           );
           result = { ...result, diaryDraft };
+          if (result.mode === "complete" && !plan.skipDiary) {
+            const quotes = [
+              result.sourceQuote,
+              diaryEvidence?.insight,
+              diaryEvidence?.reaction,
+              diaryEvidence?.wish,
+            ];
+            const hasSource = quotes.some((quote) => {
+              const words = quote?.replace(/\s/g, "");
+              return words && userStory.some((story) => story.includes(words));
+            });
+            if (!hasSource)
+              throw new AppError(
+                502,
+                "DRAFT_SOURCE",
+                "기록에 담을 표현을 확인하지 못했어요. 다시 요청해 주세요.",
+              );
+          }
         }
         const question = result.sentences.at(-1) ?? "";
         if (
@@ -507,13 +531,23 @@ export async function runStreamingChat(
         if (
           suppressed ||
           !(error instanceof AppError) ||
-          !["FORMAT", "ATTRIBUTION", "QUESTION"].includes(error.code)
+          !["FORMAT", "ATTRIBUTION", "QUESTION", "DRAFT_SOURCE"].includes(error.code)
         )
           throw error;
         await slot.extra();
         received.length = 0;
         mode = "continue";
         result = await prepareReply();
+      }
+      if (
+        result.mode === "complete" &&
+        !plan.skipDiary &&
+        safety === "normal" &&
+        result.diaryDraft
+      ) {
+        if (await flagged(result.diaryDraft))
+          throw new AppError(502, "OUTPUT_SAFETY", "기록 초안을 확인하지 못했어요.");
+        diaryDraft = result.diaryDraft;
       }
       if (!suppressed) {
         const displayed = new Set<string>();
@@ -581,33 +615,7 @@ export async function runStreamingChat(
           "QUESTION",
           "다음 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
         );
-      if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
-        const quotes = [
-          result.sourceQuote,
-          diaryEvidence?.insight,
-          diaryEvidence?.reaction,
-          diaryEvidence?.wish,
-        ];
-        const hasSource = quotes.some(
-          (quote) =>
-            quote?.trim() &&
-            messages.some(
-              (m) =>
-                m.role === "user" &&
-                m.content.replace(/\s/g, "").includes(quote.replace(/\s/g, "")),
-            ),
-        );
-        if (!hasSource)
-          throw new AppError(
-            502,
-            "DRAFT_SOURCE",
-            "기록에 담을 표현을 확인하지 못했어요. 다시 요청해 주세요.",
-          );
-        if (await flagged(result.diaryDraft))
-          throw new AppError(502, "OUTPUT_SAFETY", "기록 초안을 확인하지 못했어요.");
-        diaryDraft = result.diaryDraft;
-        if (!body) publish(diaryDraft);
-      }
+      if (diaryDraft && !body) publish(diaryDraft);
     }
     const progress: Progress =
       safety !== "normal"
