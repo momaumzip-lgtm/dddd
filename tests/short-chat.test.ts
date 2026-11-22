@@ -217,7 +217,7 @@ test("only an explicit ending closes the conversation; an offered synthesis keep
     provider("complete").ai,
     () => {},
   );
-  await assert.rejects(early, /정리에 담을 내용/);
+  await assert.rejects(early, /대화를 이어갈 답변/);
   assert.equal(
     responsePlan({ turns: 1, questions: 1, completed: false }, "chat", "응", []).forceComplete,
     false,
@@ -374,7 +374,7 @@ test("production SDK streams actual text fields before completion without routin
       emotion: selectionContext(emotion),
       forceComplete: false,
       listening: false,
-      exploring: false,
+      followupQuestion: false,
       turn: 1,
       previousSafety: "normal",
     },
@@ -389,12 +389,12 @@ test("production SDK streams actual text fields before completion without routin
   assert.equal(calls[0].reasoning.effort, "low");
   assert.ok(!calls[0].instructions.includes("긍정 감정: 57"));
   const modes = calls[0].text.format.schema.properties.reply.anyOf;
-  const completion = modes.find(
-    (branch: { properties: { mode: { const: string } } }) =>
-      branch.properties.mode.const === "complete",
+  assert.deepEqual(
+    modes.map(
+      (branch: { properties: { mode: { const: string } } }) => branch.properties.mode.const,
+    ),
+    ["safety", "refusal", "continue"],
   );
-  assert.deepEqual(Object.keys(completion.properties).slice(0, 3), ["mode", "safety", "sentences"]);
-  assert.ok(completion.required.includes("sourceQuote"));
   const custom = "사용자가 직접 지은 감정";
   await ai.streamReply(
     [{ role: "user", content: "오늘 이야기" }],
@@ -471,7 +471,7 @@ test("SDK treats failed, incomplete, refusal and missing terminal streams as fai
     emotion: selectionContext(emotion),
     forceComplete: true,
     listening: false,
-    exploring: false,
+    followupQuestion: false,
     turn: 3,
     previousSafety: "normal" as const,
   };
@@ -698,7 +698,7 @@ test("production response schema accepts a one-line completion and rejects a mul
         emotion: selectionContext(emotion),
         forceComplete: true,
         listening: false,
-        exploring: false,
+        followupQuestion: false,
         turn: 3,
         previousSafety: "normal",
       },
@@ -713,7 +713,7 @@ test("listening, uncertainty, continued exploration and diary preference do not 
   const progress = { turns: 4, questions: 4, completed: false };
   for (const text of ["그냥 들어줘", "잘 모르겠어", "더 살펴보고 싶어요", "기록은 안 할래"])
     assert.equal(responsePlan(progress, "chat", text, []).forceComplete, false);
-  assert.equal(responsePlan(progress, "chat", "더 살펴보고 싶어요", []).exploring, true);
+  assert.equal(responsePlan(progress, "chat", "더 살펴보고 싶어요", []).followupQuestion, true);
   assert.equal(
     responsePlan(progress, "chat", "지금 끝내자", [{ role: "user", content: "기록은 안 할래" }])
       .skipDiary,
@@ -953,7 +953,7 @@ test("ordinary first disclosures need a question, including advice-only and diar
       runStreamingChat({ ...a, rid: id() }, gate, provider(mode).ai, () =>
         assert.fail("premature closing text"),
       ),
-      /첫 답변/,
+      /대화를 이어갈 답변/,
     );
   }
   const result = await runStreamingChat({ ...a, rid: id() }, gate, provider().ai, () => {});
@@ -975,7 +975,7 @@ test("a malformed opening is retryable without inventing a generic question", as
   };
   await assert.rejects(
     runStreamingChat(args(), new Gate(new LuaStore(), cap), p.ai, () => {}),
-    /첫 질문/,
+    /다음 질문/,
   );
 });
 test("the opening SDK contract streams reflection before its required question and excludes closing modes", async () => {
@@ -1055,78 +1055,53 @@ test("connection, timeout, validation and upstream errors give readable recovery
     /Unexpected|SyntaxError/,
   );
 });
-test("a spontaneous diary can be edited while the next message uses the same open session", async () => {
+test("ordinary replies keep the conversation open through a wish, an insight and another turn", async () => {
   const gate = new Gate(new LuaStore(), cap),
     base = args(),
     p = provider();
-  let first = await runStreamingChat(base, gate, p.ai, () => {});
-  await gate.acknowledge(base.sid, base.cid, base.rid, first.revision);
-  const second = {
-    ...base,
-    progress: first.progress,
-    history: first.history,
-    revision: first.revision,
-    rid: id(),
-    message: "일정을 미리 알려줬으면 했어요. 다음에는 내가 먼저 시간을 확인할래요.",
-  };
-  const model = provider().ai;
-  model.streamReply = async (_m, _c, emit) => {
-    const sentence = "일정을 조정할 시간을 원하셨군요.";
-    await emit(sentence, { mode: "complete", safety: "normal" });
-    return {
-      mode: "complete",
-      safety: "normal",
-      sentences: [sentence],
-      diaryDraft: "나는 일정을 미리 알고 싶었다.",
-      sourceQuote: "미리 알려줬으면",
-      perspectiveQuote: "내가 먼저 시간을 확인할래요",
-    };
-  };
-  let current = second;
-  for (const message of ["조금 더 이야기할게요.", "일정을 알고 나면 편해져요."]) {
+  let state = { ...base, history: [] as { role: "assistant" | "user"; content: string }[] };
+  for (const message of [
+    "회의에서 제 말을 끊어서 서운했어요.",
+    "다음에는 집에 가서 일기를 쓰고 싶어요.",
+    "하루를 돌아보면 제가 뭘 원했는지 좀 알 것 같아요.",
+    "아직 하나 더 생각나는 게 있어요.",
+  ]) {
+    const request = { ...state, message, rid: id() };
     await assert.rejects(
-      runStreamingChat(current, gate, model, () => assert.fail("early summary")),
-      /정리에 담을 내용/,
+      runStreamingChat(request, gate, provider("complete").ai, () =>
+        assert.fail("unrequested ending"),
+      ),
+      /대화를 이어갈 답변/,
     );
-    const rid = id();
-    const continued = await runStreamingChat({ ...current, rid }, gate, p.ai, () => {});
-    await gate.acknowledge(base.sid, base.cid, rid, continued.revision);
-    current = {
-      ...current,
-      history: continued.history,
-      progress: continued.progress,
-      revision: continued.revision,
-      rid: id(),
-      message,
+    request.rid = id();
+    const reply = await runStreamingChat(request, gate, p.ai, () => {});
+    assert.equal(reply.progress.completed, false);
+    assert.equal(reply.surveyReady, false);
+    assert.equal(reply.diaryDraft, null);
+    assert.equal(reply.progress.questions, state.progress.questions + 1);
+    await gate.acknowledge(base.sid, base.cid, request.rid, reply.revision);
+    state = {
+      ...state,
+      history: reply.history,
+      progress: reply.progress,
+      revision: reply.revision,
     };
   }
-  const offered = await runStreamingChat(current, gate, model, () => {});
-  assert.ok(offered.diaryDraft);
-  assert.ok(offered.body.endsWith(DIARY_INVITATION));
-  assert.equal(offered.progress.completed, false);
-  assert.equal(offered.surveyReady, true);
-  await gate.acknowledge(base.sid, base.cid, current.rid, offered.revision);
-  const next = await runStreamingChat(
-    {
-      ...second,
-      history: offered.history,
-      progress: offered.progress,
-      revision: offered.revision,
-      rid: id(),
-      message: "친구가 아니라 동료였어요.",
-    },
+  const finish = await runStreamingChat(
+    { ...state, message: "지금 정리해 주세요.", rid: id() },
     gate,
     p.ai,
     () => {},
   );
-  assert.equal(next.progress.turns, 5);
-  assert.equal(next.progress.completed, false);
+  assert.equal(finish.progress.completed, true);
+  assert.equal(finish.surveyReady, true);
 });
 
 test("immediate endings and ordinary reluctance are separate intentions", () => {
   for (const value of [
     "바로 끝내줘",
     "오늘은 이만 마무리해 주세요.",
+    "지금 일기를 써 줄래요?",
     "이유는 아직 모르겠고 오늘은 여기까지 할래요",
     "대화를 끝내 주세요.",
   ])
@@ -1135,6 +1110,9 @@ test("immediate endings and ordinary reluctance are separate intentions", () => 
     "끝내고 싶지 않아요",
     "조언은 싫어요",
     "기록은 거절할게요",
+    "일기를 쓰고 싶어요.",
+    "다음에 기록해 주세요.",
+    "지금은 그냥 집에 가고 싶어요.",
     "더 이야기하고 싶어요",
   ])
     assert.equal(responsePlan(freshProgress, "chat", value, []).forceComplete, false);

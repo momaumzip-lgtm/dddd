@@ -286,18 +286,6 @@ export class AI {
             "사용자에게 건네는 존댓말 한 문장. 사용자가 한 행동은 “직접 하셨군요”처럼 전하며 “제가 했다”고 쓰지 않는다. 정정과 기록을 요청하면 바로잡은 사실만 짚고 바람이나 이유를 보태지 않는다. 기록 권유는 앱이 표시한다.",
           ),
       });
-      const reflection = context.forceComplete
-        ? complete
-        : complete.extend({
-            perspectiveQuote: z
-              .string()
-              .trim()
-              .min(1)
-              .max(200)
-              .describe(
-                "사용자가 택한 시각이나 행동이 담긴 연속된 구절을 그대로 복사한다. sourceQuote와 별개여야 한다. 새 선택을 뒷받침하는 원문이 없으면 continue.",
-              ),
-          });
       const safety = streamReplySchema.extend({ mode: z.literal("safety") });
       const refusal = streamReplySchema.extend({ mode: z.literal("refusal") });
       const ongoing = streamReplySchema.extend({
@@ -348,6 +336,29 @@ export class AI {
               context.emotion.responseGuidance,
           ),
       });
+      const followup = ongoing.extend({
+        sentences: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .max(300)
+              .regex(/^[^?？؟﹖\n]+$/),
+          )
+          .max(1)
+          .describe(
+            "질문만으로 자연스러우면 빈 배열. 설명이 꼭 필요할 때만 한 문장. 이전 말을 매번 되풀이하지 않는다.",
+          ),
+        question: z
+          .string()
+          .trim()
+          .min(2)
+          .max(300)
+          .regex(/^[^?？؟﹖\n]+[?？]$/)
+          .describe(
+            "방금 사용자가 더해 준 말이나 행동에서 아직 묻지 않은 한 가지를 고른다. 한두 마디로 답할 수 있게 묻고, 이미 알려준 사실이나 바람을 다시 설명시키지 않는다.",
+          ),
+      });
       const close = streamReplySchema.extend({
         mode: z.literal("close"),
         sentences: z
@@ -363,9 +374,11 @@ export class AI {
       const replies = z.discriminatedUnion("mode", [
         safety,
         refusal,
-        ...(context.forceComplete ? [] : context.openingQuestion ? [opening] : [ongoing]),
-        ...(context.forceComplete ? [close] : []),
-        ...(context.openingQuestion || context.exploring || context.skipDiary ? [] : [reflection]),
+        ...(context.forceComplete
+          ? context.skipDiary
+            ? [close]
+            : [complete, close]
+          : [context.openingQuestion ? opening : context.followupQuestion ? followup : ongoing]),
       ]);
       const schema = z.object({ reply: replies }).strict();
       const stream = await this.client.responses.create(
@@ -389,9 +402,9 @@ export class AI {
               ? "이번에는 질문 없이 마무리하세요. 기록을 원하면 complete, 기록을 거절했거나 듣기만 원하면 close입니다. close에서도 실제로 나눈 핵심이나 아직 모르는 점 하나를 담고 기록 권유는 생략하세요."
               : context.openingQuestion
                 ? "첫 자유 입력입니다. sentences에는 말한 장면과 선택 강도에 맞는 공감 평서문 하나, question에는 이 사람에게 도움이 될 다음 질문 하나를 쓰세요. 사용자가 거절한 주제는 언급하지 말고 넘어가세요. 두 선택지를 나열하거나 감정과 강도를 다시 묻지 마세요."
-                : context.exploring
-                  ? "지금은 이야기를 이어가는 차례입니다. 발견을 말해도 요약하거나 기록을 제안하지 마세요. 강도에 맞춰 방금 나온 말이나 행동 한 가지에 머무세요."
-                  : "후속입니다. 반응의 이유와 마음을 대하는 태도·선택이 모두 사용자 말에 있으면 complete로 정리하세요. 둘 중 하나가 아직 없거나 탐색을 원하면 continue입니다. 모르겠다는 지점은 같은 질문으로 되묻지 마세요.") +
+                : context.followupQuestion
+                  ? "대화를 이어가세요. 사용자가 막 들려준 내용과 이전에 답한 내용을 구분해 question에 구체적인 질문 하나를 쓰세요. 요약, 기록 권유, 작별 인사를 붙이지 마세요."
+                  : "사용자가 직접 물은 것이나 부탁한 일에 짧게 답하세요. 더 설명하라고 재촉하거나 이야기를 마무리하지 마세요.") +
             (context.listening
               ? " 추가 질문을 하지 마세요. 듣기만 원하면 이해한 내용만 반영하고, 직접 부탁한 도움이 있으면 그 요청에 짧게 답하세요."
               : "") +

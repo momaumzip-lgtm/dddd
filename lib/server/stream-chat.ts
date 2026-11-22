@@ -17,14 +17,13 @@ export const streamReplySchema = z
 export type StreamReply = z.infer<typeof streamReplySchema> & {
   diaryDraft?: string;
   sourceQuote?: string;
-  perspectiveQuote?: string;
 };
 export type StreamContext = {
   emotion: ReturnType<typeof selectionContext>;
   forceComplete: boolean;
   listening: boolean;
   skipDiary?: boolean;
-  exploring?: boolean;
+  followupQuestion?: boolean;
   openingQuestion?: boolean;
   turn: number;
   previousSafety: Safety;
@@ -130,7 +129,6 @@ export async function runStreamingChat(
     questions = 0,
     mode = "continue",
     firstMs: number | undefined;
-  let deferredSummary = "";
   const admissionMs = performance.now() - started;
   let modelFirstTextMs: number | undefined;
   let generationStartedMs: number | undefined;
@@ -190,7 +188,7 @@ export async function runStreamingChat(
           forceComplete: plan.forceComplete,
           listening: plan.listening,
           skipDiary: plan.skipDiary,
-          exploring: plan.exploring || (plan.firstInput && plan.listening && !plan.forceComplete),
+          followupQuestion: plan.followupQuestion,
           openingQuestion: plan.openingQuestion,
           turn: plan.current.turns + 1,
           previousSafety: safety,
@@ -228,13 +226,12 @@ export async function runStreamingChat(
           received.some((sentence, i) => sentence.trim() !== result.sentences[i].trim())
         )
           throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
-        if (
-          plan.firstInput &&
-          !plan.forceComplete &&
-          (plan.openingQuestion || plan.listening) &&
-          result.mode !== "continue"
-        )
-          throw new AppError(502, "MODE", "첫 답변을 이어가지 못했어요. 다시 요청해 주세요.");
+        if (!plan.forceComplete && (result.mode === "complete" || result.mode === "close"))
+          throw new AppError(
+            502,
+            "MODE",
+            "대화를 이어갈 답변을 받지 못했어요. 다시 요청해 주세요.",
+          );
         if (plan.forceComplete && result.mode === "continue")
           throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
         const reviewStart = performance.now();
@@ -291,31 +288,11 @@ export async function runStreamingChat(
               "OUTPUT_SAFETY",
               "답변의 안전을 확인하지 못했어요. 도움 받기를 이용할 수 있어요.",
             );
-          if (result.mode === "complete" && !plan.forceComplete) deferredSummary = sentence;
-          else publish(sentence);
+          publish(sentence);
         }
       }
       mode = result.mode;
-      if (mode === "complete" && !plan.forceComplete) {
-        const quotes = [result.sourceQuote?.trim(), result.perspectiveQuote?.trim()];
-        if (
-          plan.skipDiary ||
-          plan.exploring ||
-          !result.diaryDraft ||
-          !deferredSummary ||
-          quotes[0] === quotes[1] ||
-          !quotes.every(
-            (q) => q && messages.some((m) => m.role === "user" && m.content.includes(q)),
-          )
-        ) {
-          throw new AppError(
-            502,
-            "REFLECTION_SOURCE",
-            "정리에 담을 내용을 확인하지 못했어요. 입력은 그대로 남아 있어요.",
-          );
-        }
-      }
-      if (!body && !deferredSummary && !(mode === "complete" && result.diaryDraft))
+      if (!body && !(mode === "complete" && result.diaryDraft))
         throw new AppError(
           502,
           "EMPTY",
@@ -323,11 +300,16 @@ export async function runStreamingChat(
             ? "질문 없는 정리를 완성하지 못했어요. 다시 요청할 수 있어요."
             : "표시할 답변을 받지 못했어요. 입력은 그대로 남아 있어요.",
         );
-      if (plan.openingQuestion && mode === "continue" && safety === "normal" && questions === 0)
+      if (
+        (plan.openingQuestion || plan.followupQuestion) &&
+        mode === "continue" &&
+        safety === "normal" &&
+        questions === 0
+      )
         throw new AppError(
           502,
           "QUESTION",
-          "첫 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
+          "다음 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
         );
       if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
         const quote = result.sourceQuote?.trim();
@@ -340,7 +322,7 @@ export async function runStreamingChat(
         if (await flagged(result.diaryDraft))
           throw new AppError(502, "OUTPUT_SAFETY", "기록 초안을 확인하지 못했어요.");
         diaryDraft = result.diaryDraft;
-        if (!body) publish(deferredSummary || diaryDraft);
+        if (!body) publish(diaryDraft);
       }
     }
     const progress: Progress =
@@ -351,7 +333,7 @@ export async function runStreamingChat(
             questions: plan.current.questions + questions,
             completed: plan.forceComplete && (mode === "complete" || mode === "close"),
           };
-    const surveyReady = (progress.completed || Boolean(diaryDraft)) && safety === "normal";
+    const surveyReady = progress.completed && safety === "normal";
     if (diaryDraft && safety === "normal") publish("\n\n" + DIARY_INVITATION);
     progress.messageIds = [...(args.progress.messageIds || []), messageId];
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");

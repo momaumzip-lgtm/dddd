@@ -51,7 +51,7 @@ async function openSession(signal: AbortSignal): Promise<Session> {
 export default function Chat({ config }: { config: PublicConfig }) {
   const [started, setStarted] = useState(false),
     [emotion, setEmotion] = useState<EmotionSelection | null>(null),
-    [completion, setCompletion] = useState<"open" | "local" | "confirmed">("open"),
+    [completion, setCompletion] = useState<"open" | "confirmed">("open"),
     [diaries, setDiaries] = useState<Record<number, string>>({}),
     [streamText, setStreamText] = useState("");
   const complete = completion !== "open";
@@ -571,18 +571,13 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       type="button"
                       className="continue-chat secondary"
                       onClick={() => {
-                        if (diaries[history.length - 1]) {
-                          setCompletion("local");
-                          setSurveyInvite(true);
-                          return;
-                        }
                         void send({
                           action: "summary",
                           text: "지금까지 이야기한 내용으로 정리해 주세요.",
                         });
                       }}
                     >
-                      {diaries[history.length - 1] ? "여기서 마치기" : "지금 정리하기"}
+                      지금 정리하기
                     </button>
                   )}
                 {complete && !help && (

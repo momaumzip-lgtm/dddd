@@ -37,6 +37,32 @@ function onlyExpressesUncertainty(text: string) {
   );
 }
 
+function requestsDiaryNow(text: string) {
+  const clause = text
+    .trim()
+    .replace(/[.!?。！？\s]+$/, "")
+    .split(/[.!?。！？,，\n]/)
+    .at(-1)
+    ?.trim();
+  if (!clause || /나중에|다음번에|다음에|내일|이따가/.test(clause)) return false;
+  const asksForDraft =
+    /(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:정리해|남겨|해|써|만들어)\s*(?:줘|주세요|줄래요)$/.test(
+      clause,
+    );
+  const asksForLine =
+    /(?:한\s*(?:줄|문장)(?:으로|로)?|이\s*마음을?|그걸|이걸|지금|바로)\s*적어\s*(?:줘|주세요|줄래요)$/.test(
+      clause,
+    );
+  // First-person wishes are ambiguous unless they refer to this chat or its written result.
+  const wantsDraftHere =
+    /^(?:(?:이제는?|지금은?|바로|여기서|이걸|그걸|이 마음을|오늘 대화를)\s*)+(?:한\s*(?:줄|문장)(?:으로|로)?\s*)?(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:남기고|하고|쓰고|적고)\s*싶(?:어|어요|습니다)$/.test(
+      clause,
+    );
+  const wantsOneLine =
+    /^한\s*(?:줄|문장)(?:으로|로)?\s*(?:기록하고|적고|남기고)\s*싶(?:어|어요|습니다)$/.test(clause);
+  return asksForDraft || asksForLine || wantsDraftHere || wantsOneLine;
+}
+
 export function responsePlan(
   progress: Progress,
   action: string,
@@ -68,19 +94,8 @@ export function responsePlan(
       listening = false;
     }
   }
-  const asksToRecordNow =
-    /(?:(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:남기고\s*싶|하고\s*싶|쓰고\s*싶|(?:정리해|남겨|해|써|만들어)\s*(?:줘|주세요))|(?:한\s*(?:줄|문장)(?:으로|로)?|이\s*마음을?|그걸|이걸|지금|바로)\s*(?:적고\s*싶|남기고\s*싶|적어\s*(?:줘|주세요)))(?:어요?|요)?[.!\s]*$/.test(
-      latest,
-    );
   const forceComplete =
-    action === "summary" || wantsFinish(latest) || (!skipDiary && asksToRecordNow);
-  const exploring =
-    !forceComplete &&
-    (current.turns < 3 ||
-      (!/(?:이야기|살펴보|알아보|탐색|얘기).{0,8}(?:싶지|싫|그만)/.test(latest) &&
-        /(?:더|계속|깊이).{0,10}(?:이야기|살펴보|알아보|탐색|얘기).{0,6}(?:싶|할래|해보|볼래)/.test(
-          latest,
-        )));
+    action === "summary" || wantsFinish(latest) || (!skipDiary && requestsDiaryNow(latest));
   // A direct request for wording calls for an answer. An ordinary account, even a detailed one, opens exploration.
   const asksForWording =
     /(?:문자|메시지|답장|표현|문구).{0,35}(?:써\s*(?:줘|주세요)|쓰면|작성해|추천해)|어떻게\s*(?:말하면|전하면|답하면|쓰면)/.test(
@@ -105,7 +120,12 @@ export function responsePlan(
   return {
     current,
     forceComplete,
-    exploring,
+    followupQuestion:
+      !firstInput &&
+      !forceComplete &&
+      !listening &&
+      !asksForWording &&
+      !/[?？]$/.test(latest.trim()),
     listening,
     firstInput,
     openingQuestion,

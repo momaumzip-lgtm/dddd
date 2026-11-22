@@ -16,7 +16,8 @@ export class ReplyFields {
     const ready: string[] = [];
     for (const c of delta) {
       if (this.quoted) {
-        if (this.inSentences && c.trim() && c !== '"' && c !== "\\") this.hasSentenceText = true;
+        if ((this.inSentences || this.key === "question") && c.trim() && c !== '"' && c !== "\\")
+          this.hasSentenceText = true;
         this.token += c;
         if (this.escaped) {
           this.escaped = false;
@@ -40,15 +41,11 @@ export class ReplyFields {
             if (this.key === "mode") this.mode = value;
             else if (this.key === "safety") this.safety = value;
             else if (this.key === "question") {
-              if (!this.mode || !this.safety || this.sentences.length !== 1)
-                throw new Error("Missing opening reflection");
+              if (!this.mode || !this.safety || this.sentences.length > 1)
+                throw new Error("Invalid question header");
               this.sentences.push(value);
               ready.push(value);
-            } else if (
-              this.key !== "diaryDraft" &&
-              this.key !== "sourceQuote" &&
-              this.key !== "perspectiveQuote"
-            )
+            } else if (this.key !== "diaryDraft" && this.key !== "sourceQuote")
               throw new Error("Unknown response field");
           }
         }
