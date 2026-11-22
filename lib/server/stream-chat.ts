@@ -76,7 +76,12 @@ function unreadableReply(reply: StreamReply) {
   );
 }
 const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
-function selectSentences(text: string, allowQuestion: boolean, diarySummary: boolean) {
+function selectSentences(
+  text: string,
+  allowQuestion: boolean,
+  diarySummary: boolean,
+  displayed: Set<string>,
+) {
   const kept: string[] = [];
   let asked = false;
   for (const part of sentenceBoundaries.segment(text)) {
@@ -93,7 +98,10 @@ function selectSentences(text: string, allowQuestion: boolean, diarySummary: boo
     const marks = sentence.match(/[?？؟﹖]/g)?.length ?? 0;
     const question =
       marks > 0 ||
-      /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|싶으세요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
+      /(?:어떻게|뭐|무슨|어떤).*(?:했어요|받았어요|들었어요|였어요|있었어요|싶었어요)요?[.。]+$/.test(
+        sentence,
+      ) ||
+      /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|싶으세요|바라세요|원하세요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
         sentence,
       );
     if (question) {
@@ -106,7 +114,11 @@ function selectSentences(text: string, allowQuestion: boolean, diarySummary: boo
         continue;
       asked = true;
     }
-    kept.push(sentence);
+    const key = sentence.replace(/[.!?。！？]+$/, "").replace(/\s+/g, "");
+    if (!displayed.has(key)) {
+      displayed.add(key);
+      kept.push(sentence);
+    }
   }
   return { text: kept.join(" "), asked };
 }
@@ -216,9 +228,17 @@ export async function runStreamingChat(
         const userWords = segment
           .filter((m) => m.role === "user")
           .map((m) => m.content.replace(/\s+/g, ""));
-        const [wish, meaning, reaction] = [review.wish, review.meaning, review.reaction].map((q) =>
-          q.replace(/\s+/g, ""),
-        );
+        const [wish, meaning, suggestedReaction] = [
+          review.wish,
+          review.meaning,
+          review.reaction,
+        ].map((quote) => quote.replace(/\s+/g, ""));
+        const latestWords = userWords.at(-1) ?? "";
+        // A model may prefix a short answer with its question. Keep only the literal answer.
+        const reaction =
+          latestWords.length >= 4 && suggestedReaction.endsWith(latestWords)
+            ? latestWords
+            : suggestedReaction;
         const grounded = (q: string) => q.length >= 2 && userWords.some((s) => s.includes(q));
         const hasMeaning = grounded(meaning) && !wish.includes(meaning) && !meaning.includes(wish);
         const hasReaction =
@@ -228,9 +248,20 @@ export async function runStreamingChat(
             reaction,
           );
         reflectionStep = review.next;
-        if (grounded(wish) && hasMeaning && hasReaction && review.next !== "continue") {
+        const answeredReaction =
+          review.next === "reaction" && reaction === latestWords && reaction !== meaning;
+        if (
+          (review.next === "diary" || answeredReaction) &&
+          grounded(wish) &&
+          hasMeaning &&
+          hasReaction
+        ) {
           reflectionStep = "diary";
-          diaryEvidence = { wish: review.wish, meaning: review.meaning, reaction: review.reaction };
+          diaryEvidence = {
+            wish: review.wish,
+            meaning: review.meaning,
+            reaction: reaction === latestWords ? args.message : review.reaction,
+          };
         } else if (review.next === "diary")
           reflectionStep = !grounded(wish) ? "wish" : !hasMeaning ? "meaning" : "reaction";
       }
@@ -337,6 +368,23 @@ export async function runStreamingChat(
         ) {
           result = { ...result, sentences: ["그 일이 조금 마음에 남았군요."] };
         }
+        if (
+          result.mode === "continue" &&
+          (plan.openingQuestion || plan.clarifyQuestion) &&
+          !selectSentences(result.sentences.at(-1) ?? "", true, false, new Set()).asked
+        )
+          throw new AppError(
+            502,
+            "QUESTION",
+            "다음 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
+          );
+        if (result.diaryDraft) {
+          const diaryDraft = result.diaryDraft.replace(
+            /(^|\s)([가-힣]{2,10}(?:이|가|은|는|을|를))\s+\2(?=\s|[,.!?。]|$)/g,
+            "$1$2",
+          );
+          result = { ...result, diaryDraft };
+        }
         const reviewStart = performance.now();
         // Review cumulative text and the diary in one request. A subsequent edit or
         // filter changes the cache key, so only the exact reviewed text can be reused.
@@ -370,7 +418,7 @@ export async function runStreamingChat(
         if (
           suppressed ||
           !(error instanceof AppError) ||
-          !["FORMAT", "ATTRIBUTION"].includes(error.code)
+          !["FORMAT", "ATTRIBUTION", "QUESTION"].includes(error.code)
         )
           throw error;
         await slot.extra();
@@ -379,15 +427,17 @@ export async function runStreamingChat(
         result = await prepareReply();
       }
       if (!suppressed) {
+        const displayed = new Set<string>();
         for (let sentence of result.sentences) {
           const selected = selectSentences(
             sentence,
             result.mode === "continue" &&
               !plan.listening &&
               questions === 0 &&
-              (!plan.openingQuestion || Boolean(body)) &&
-              (!plan.followupQuestion || sentence === result.sentences.at(-1)),
+              (!(plan.openingQuestion || plan.followupQuestion) ||
+                sentence === result.sentences.at(-1)),
             result.mode === "complete",
+            displayed,
           );
           if (!selected.text) continue;
           sentence = selected.text;
@@ -421,6 +471,8 @@ export async function runStreamingChat(
         }
       }
       mode = result.mode;
+      if (!body && mode === "continue" && plan.listening && safety === "normal")
+        publish("편한 만큼 이어서 말씀해 주세요.");
       if (!body && !(mode === "complete" && result.diaryDraft))
         throw new AppError(
           502,
@@ -430,7 +482,7 @@ export async function runStreamingChat(
             : "표시할 답변을 받지 못했어요. 입력은 그대로 남아 있어요.",
         );
       if (
-        (plan.openingQuestion || plan.followupQuestion) &&
+        (plan.openingQuestion || plan.clarifyQuestion) &&
         mode === "continue" &&
         safety === "normal" &&
         questions === 0
@@ -441,14 +493,17 @@ export async function runStreamingChat(
           "다음 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
         );
       if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
-        const quote = result.sourceQuote?.trim();
-        if (
-          !quote ||
-          !messages.some(
-            (m) =>
-              m.role === "user" && m.content.replace(/\s/g, "").includes(quote.replace(/\s/g, "")),
-          )
-        )
+        const quotes = [result.sourceQuote, diaryEvidence?.reaction, diaryEvidence?.wish];
+        const hasSource = quotes.some(
+          (quote) =>
+            quote?.trim() &&
+            messages.some(
+              (m) =>
+                m.role === "user" &&
+                m.content.replace(/\s/g, "").includes(quote.replace(/\s/g, "")),
+            ),
+        );
+        if (!hasSource)
           throw new AppError(
             502,
             "DRAFT_SOURCE",

@@ -1,3 +1,4 @@
+import { BRIEF_PROMPT } from "../lib/server/prompts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -932,7 +933,7 @@ test("a followup exposes only the dedicated question when a draft repeats it wit
   const p = provider();
   p.ai.streamReply = async (_messages, _context, emit) => {
     const sentences = [
-      "어떤 사진을 먼저 보여주고 싶으세요.",
+      "전시 사진을 한 번 보여주고 싶으셨군요. 어떤 사진을 먼저 보여주고 싶으세요. 좋았던 게 뭐였어요요. 전시 사진을 한 번 보여주고 싶으셨군요。",
       "어떤 사진을 먼저 보여주고 싶으세요?",
     ];
     for (const sentence of sentences) await emit(sentence, { mode: "continue", safety: "normal" });
@@ -952,7 +953,10 @@ test("a followup exposes only the dedicated question when a draft repeats it wit
     p.ai,
     () => {},
   );
-  assert.equal(turn.body, "어떤 사진을 먼저 보여주고 싶으세요?");
+  assert.equal(
+    turn.body,
+    "전시 사진을 한 번 보여주고 싶으셨군요. 어떤 사진을 먼저 보여주고 싶으세요?",
+  );
 });
 test("a later request to write can follow listening or a declined diary", () => {
   const history = [{ role: "user", content: "지금은 기록하고 싶지 않고 그냥 들어줘." }];
@@ -1163,7 +1167,9 @@ test("the opening SDK contract streams reflection before its required question a
           assert.equal(questionPattern.test("그 순간 어떤 마음이 들？"), false);
         }
         const state = JSON.parse(request.instructions.split("검증된 현재 상태(JSON 데이터): ")[1]);
-        assert.deepEqual(state.emotion, context.emotion);
+        const { responseGuidance: _guidance, ...selectedEmotion } = context.emotion;
+        assert.deepEqual(state.emotion, selectedEmotion);
+        assert.ok(request.instructions.startsWith(BRIEF_PROMPT + "\n\n[앱 연동 규칙]"));
         const wire = JSON.stringify({
           reply: { mode: "continue", safety: "normal", sentences: [lines[0]], question: lines[1] },
         });
@@ -1320,7 +1326,7 @@ test("natural diary needs user evidence for the wish, its meaning and the respon
     ai.reviewReadiness = async () => ({
       wish: "끝까지 들어줬으면",
       meaning: "무시당한 기분",
-      reaction,
+      reaction: grounded ? "어떻게 반응하세요?에 대한 답: " + reaction : reaction,
       next: "diary",
     });
     const ordinary = ai.streamReply;
