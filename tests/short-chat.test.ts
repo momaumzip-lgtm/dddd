@@ -800,6 +800,70 @@ test("event contrasts preserve the selection; an explicit comparison updates onl
   assert.equal(fixed.intensityBand, "unknown");
   assert.deepEqual(correctedSelection(fixed, "화가 아니라 서운해"), fixed);
 });
+test("a short negative answer pauses the question without ending the conversation", () => {
+  const history = [
+    { role: "user", content: "친구들이 결혼 이야기만 해서 외로웠어." },
+    { role: "assistant", content: "그 자리에서 하고 싶었던 이야기가 있었어요?" },
+  ];
+  const progress = { ...freshProgress, turns: 1, questions: 1 };
+  for (const text of ["없어", "딱히 없어요.", "그런 적은 없었어요"]) {
+    const plan = responsePlan(progress, "chat", text, history);
+    assert.equal(plan.listening, true);
+    assert.equal(plan.followupQuestion, false);
+    assert.equal(plan.forceComplete, false);
+  }
+  assert.equal(
+    responsePlan(progress, "chat", "없어. 그래도 친구가 먼저 말을 걸어줬어.", history)
+      .followupQuestion,
+    true,
+  );
+});
+
+test("output-format notes in a valid reply never reach the stream or signed history", async () => {
+  const history = [
+    { role: "user" as const, content: "친구들이 결혼 이야기만 해서 외로웠어." },
+    { role: "assistant" as const, content: "그 자리에서 하고 싶었던 이야기가 있었어요?" },
+  ];
+  const clean = "하고 싶었던 이야기가 따로 있던 건 아니군요.";
+  const leaked =
+    "친구들이 결혼 이야기만 나눠서 소외되셨군요. :2}}ablytyped------JSON malformed question. Need natural no question. Output question string can empty. Maybe schema strict. Use continue, sentences one, question empty. Omit extraneous. Z?";
+  for (const recovers of [true, false]) {
+    const p = provider();
+    const visible: string[] = [];
+    let calls = 0;
+    p.ai.streamReply = async (_messages, context, emit) => {
+      assert.equal(context.listening, true);
+      assert.equal(context.followupQuestion, false);
+      const sentence = ++calls === 2 && recovers ? clean : leaked;
+      await emit(sentence, { mode: "continue", safety: "normal" });
+      return { mode: "continue", safety: "normal", sentences: [sentence] };
+    };
+    const result = runStreamingChat(
+      {
+        ...args(),
+        message: "없어",
+        history,
+        progress: { ...freshProgress, turns: 1, questions: 1 },
+      },
+      new Gate(new LuaStore(), cap),
+      p.ai,
+      (text) => visible.push(text),
+    );
+    if (recovers) {
+      const turn = await result;
+      assert.deepEqual(visible, [clean]);
+      assert.equal(turn.history.at(-1)?.content, clean);
+      assert.equal(turn.progress.questions, 1);
+      assert.equal(turn.progress.completed, false);
+      assert.equal(turn.surveyReady, false);
+    } else {
+      await assert.rejects(result, /입력은 그대로/);
+      assert.deepEqual(visible, []);
+    }
+    assert.equal(calls, 2);
+  }
+});
+
 test("a later request to write can follow listening or a declined diary", () => {
   const history = [{ role: "user", content: "지금은 기록하고 싶지 않고 그냥 들어줘." }];
   assert.equal(responsePlan(freshProgress, "chat", "응", history).skipDiary, true);

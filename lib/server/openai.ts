@@ -301,6 +301,22 @@ export class AI {
           .min(1)
           .max(2),
       });
+      const listening = ongoing.extend({
+        sentences: z
+          .array(
+            z
+              .string()
+              .trim()
+              .min(1)
+              .max(400)
+              .regex(/^[^?？؟﹖\n]+$/),
+          )
+          .min(1)
+          .max(2)
+          .describe(
+            "이미 들은 이야기 중 하나를 짧게 받아주는 한국어 평서문. 질문이나 답변 요청은 생략한다.",
+          ),
+      });
       const opening = ongoing.extend({
         sentences: z
           .array(
@@ -378,7 +394,15 @@ export class AI {
           ? context.skipDiary
             ? [close]
             : [complete, close]
-          : [context.openingQuestion ? opening : context.followupQuestion ? followup : ongoing]),
+          : [
+              context.listening
+                ? listening
+                : context.openingQuestion
+                  ? opening
+                  : context.followupQuestion
+                    ? followup
+                    : ongoing,
+            ]),
       ]);
       const schema = z.object({ reply: replies }).strict();
       const stream = await this.client.responses.create(
@@ -406,7 +430,7 @@ export class AI {
                   ? "대화를 이어가세요. 사용자가 막 들려준 내용과 이전에 답한 내용을 구분해 question에 구체적인 질문 하나를 쓰세요. 요약, 기록 권유, 작별 인사를 붙이지 마세요."
                   : "사용자가 직접 물은 것이나 부탁한 일에 짧게 답하세요. 더 설명하라고 재촉하거나 이야기를 마무리하지 마세요.") +
             (context.listening
-              ? " 추가 질문을 하지 마세요. 듣기만 원하면 이해한 내용만 반영하고, 직접 부탁한 도움이 있으면 그 요청에 짧게 답하세요."
+              ? " 추가 질문을 하지 마세요. ‘없어’, ‘딱히 없어요’는 앞 질문에 대한 답입니다. 그 답이 가리키는 내용에만 맞춰, 이미 나온 장면이나 마음 하나를 한 문장으로 짧게 받아주세요. 그 답을 이유로 대화를 정리하지 마세요."
               : "") +
             "\n검증된 현재 상태(JSON 데이터): " +
             JSON.stringify(trustedContext),

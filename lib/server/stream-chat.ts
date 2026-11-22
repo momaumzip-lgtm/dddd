@@ -3,6 +3,7 @@ import type { Message } from "../config";
 import { DIARY_INVITATION, freshProgress, responsePlan, type Progress } from "../conversation";
 import { correctedSelection, selectionContext, type EmotionSelection } from "../emotions";
 import { AppError } from "./errors";
+import { hasOutputInstructions } from "./reply-text";
 import { preserveAttribution } from "./attribution";
 import type { Gate } from "./limits";
 import type { Safety } from "./schemas";
@@ -49,6 +50,10 @@ export interface StreamingProvider {
     onFirstText?: () => void,
   ): Promise<StreamReply>;
 }
+function containsInternalOutput(reply: StreamReply) {
+  return hasOutputInstructions([...reply.sentences, reply.diaryDraft || ""].join(" "));
+}
+
 const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
 function selectSentences(text: string, allowQuestion: boolean, diarySummary: boolean) {
   const kept: string[] = [];
@@ -181,43 +186,54 @@ export async function runStreamingChat(
         outputCheckMs += performance.now() - start;
         return check.flagged;
       };
-      let result = await ai.streamReply(
-        messages,
-        {
-          emotion: selectionContext(emotion),
-          forceComplete: plan.forceComplete,
-          listening: plan.listening,
-          skipDiary: plan.skipDiary,
-          followupQuestion: plan.followupQuestion,
-          openingQuestion: plan.openingQuestion,
-          turn: plan.current.turns + 1,
-          previousSafety: safety,
-        },
-        async (sentence, header) => {
-          received.push(sentence);
-          if (modelFirstMs === undefined) modelFirstMs = performance.now() - started;
-          const h = streamReplySchema.pick({ mode: true, safety: true }).parse(header);
-          if (mode !== "continue" && h.mode !== mode)
-            throw new AppError(502, "STREAM_FORMAT", "답변 상태를 확인하지 못했어요.");
-          mode = h.mode;
-          safety = retainRisk(safety, h.safety);
-          if (safety !== "normal" || h.mode === "safety") {
-            if (!suppressed) {
-              publish(safetyReply(args.safety, safety === "normal" ? "check" : safety));
-              safety = safety === "normal" ? "check" : safety;
+      const generate = () =>
+        ai.streamReply(
+          messages,
+          {
+            emotion: selectionContext(emotion),
+            forceComplete: plan.forceComplete,
+            listening: plan.listening,
+            skipDiary: plan.skipDiary,
+            followupQuestion: plan.followupQuestion,
+            openingQuestion: plan.openingQuestion,
+            turn: plan.current.turns + 1,
+            previousSafety: safety,
+          },
+          async (sentence, header) => {
+            received.push(sentence);
+            if (modelFirstMs === undefined) modelFirstMs = performance.now() - started;
+            const h = streamReplySchema.pick({ mode: true, safety: true }).parse(header);
+            if (mode !== "continue" && h.mode !== mode)
+              throw new AppError(502, "STREAM_FORMAT", "답변 상태를 확인하지 못했어요.");
+            mode = h.mode;
+            safety = retainRisk(safety, h.safety);
+            if (safety !== "normal" || h.mode === "safety") {
+              if (!suppressed) {
+                publish(safetyReply(args.safety, safety === "normal" ? "check" : safety));
+                safety = safety === "normal" ? "check" : safety;
+              }
+              suppressed = true;
+              return;
             }
-            suppressed = true;
-            return;
-          }
-          if (h.mode === "refusal") {
-            if (!suppressed) publish(safetyText.refusal);
-            suppressed = true;
-          }
-        },
-        () => {
-          modelFirstTextMs = performance.now() - started;
-        },
-      );
+            if (h.mode === "refusal") {
+              if (!suppressed) publish(safetyText.refusal);
+              suppressed = true;
+            }
+          },
+          () => {
+            modelFirstTextMs = performance.now() - started;
+          },
+        );
+      let result = await generate();
+      if (!suppressed && containsInternalOutput(result)) {
+        // None of the draft has been published. Retry once with the same context.
+        await slot.extra();
+        received.length = 0;
+        mode = "continue";
+        result = await generate();
+        if (!suppressed && containsInternalOutput(result))
+          throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
+      }
       generationMs = performance.now() - genStart;
       if (!suppressed) {
         if (
@@ -248,6 +264,8 @@ export async function runStreamingChat(
           }),
           ai.moderateOutputs(candidates),
         ]);
+        if (containsInternalOutput(verified))
+          throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
         result = verified;
         candidates.forEach((text, i) => outputFlags.set(text, flags[i]));
         outputCheckMs += performance.now() - reviewStart;

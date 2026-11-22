@@ -104,6 +104,10 @@ export function responsePlan(
   const firstInput = action === "chat" && progress.turns === 0 && history.length === 0;
   // A brief feeling or an uncertain answer can stand on its own for this turn.
   const previous = history.at(-1);
+  const shortNegativeAnswer =
+    /^(?:(?:네|응|아니(?:요)?)[,，]?\s*)?(?:(?:아직|딱히|별로|그런\s*(?:일|적)(?:은|이)?)\s*)*없(?:어(?:요)?|었(?:어(?:요)?|습니다)|습니다|네요)[.!。…\s]*$/.test(
+      latest.trim(),
+    );
   const briefDisappointment =
     /^(?:(?:네|응)[,，]?\s*)?(?:(?:그냥|조금|좀|살짝|약간)\s*)*(?:(?:서운|섭섭)(?:했(?:어요|어|네요|습니다)|해(?:요)?|하네요|하긴\s*(?:했어요|해요)|하더라고요)|아쉬(?:웠(?:어요|어|네요)|워(?:요)?))[.!。…\s]*$/.test(
       latest.trim(),
@@ -113,7 +117,7 @@ export function responsePlan(
     (briefDisappointment ||
       (previous?.role === "assistant" &&
         /[?？]\s*$/.test(previous.content) &&
-        onlyExpressesUncertainty(latest)))
+        (onlyExpressesUncertainty(latest) || shortNegativeAnswer)))
   )
     listening = true;
   const openingQuestion = firstInput && !forceComplete && !listening && !asksForWording;

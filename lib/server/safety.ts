@@ -1,3 +1,4 @@
+import { hasOutputInstructions } from "./reply-text";
 import type { Reply, Safety } from "./schemas";
 export const safetyText = {
   emergency:
@@ -72,6 +73,8 @@ export function normalizeReply(reply: Reply, noQuestions: boolean, bodySentenceL
   };
 }
 export function replyFormatIssue(reply: Reply, noQuestions: boolean) {
+  if (hasOutputInstructions([reply.body, reply.question].filter(Boolean).join(" ")))
+    return "internal_output";
   const text = [reply.body, reply.question].filter(Boolean).join(" ");
   const sentences = text.split(/(?<=[.!?。？！])\s+|\n+/).filter(Boolean);
   if (sentences.length > 4) return "sentence_count";
