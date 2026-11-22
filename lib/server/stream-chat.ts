@@ -114,9 +114,10 @@ function selectSentences(
       /(?:느낀|마음에 남은|떠오른|기억나는|힘들었던).{0,18}(?:순간|때|생각|일|말|것)(?:이|은)?\s*있었어요[.。]+$/.test(
         sentence,
       ) ||
-      /(?:어떻게|뭐|무슨|어떤).*(?:했어요|받았어요|들었어요|였어요|있었어요|싶었어요)요?[.。]+$/.test(
+      /(?:어떻게|뭐|무슨|어떤).*(?:했어요|받았어요|들었어요|이?었어요|였어요|있었어요|싶었어요)요?[.。]+$/.test(
         sentence,
       ) ||
+      /까요[,，]\s*아니면/.test(sentence) ||
       /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|싶으세요|바라세요|원하세요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
         sentence,
       );
@@ -296,12 +297,17 @@ export async function runStreamingChat(
         if (reflectionStep === "meaning" && hasMeaning)
           reflectionStep = hasReaction ? "perspective" : "reaction";
         const insight = review.insight.replace(/\s+/g, "");
+        const voicedInsight =
+          latestWords.endsWith(insight) && /(?:구나|알겠어요|알게됐어요)[.。!]*$/.test(insight);
         const hasInsight =
           insight.length >= 7 &&
           grounded(insight) &&
-          [wish, meaning, reaction].some((quote) => grounded(quote) && insight !== quote);
+          (voicedInsight ||
+            [wish, meaning, reaction].some((quote) => grounded(quote) && insight !== quote));
         const answeredReaction =
-          review.next === "reaction" && reaction === latestWords && reaction !== meaning;
+          reaction === latestWords &&
+          (review.next === "reaction" ||
+            (review.next === "meaning" && hasMeaning && plan.current.turns >= 4));
         const connectedExperience = grounded(wish) && hasMeaning && hasReaction;
         if (
           plan.workReflection &&
@@ -313,7 +319,8 @@ export async function runStreamingChat(
           reflectionStep = "fact";
         if (
           plan.mayReflect &&
-          ((review.next === "diary" && (hasInsight || connectedExperience)) ||
+          (((review.next === "diary" || voicedInsight) && hasInsight) ||
+            (review.next === "diary" && connectedExperience) ||
             (answeredReaction && connectedExperience))
         ) {
           reflectionStep = "diary";
@@ -407,6 +414,32 @@ export async function runStreamingChat(
           );
         if (finish && result.mode === "continue")
           throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
+        if (
+          result.mode === "continue" &&
+          /싶(?:어(?:요)?|습니다|다)[.。!\s]*$/.test(args.message) &&
+          result.sentences.some((sentence) =>
+            /기로\s*(?:하신|하셨|했다|결정하셨)|결심하셨/.test(sentence),
+          ) &&
+          !userStory.some((story) => /기로(?:했|결정|하겠)|결심했/.test(story))
+        )
+          throw new AppError(
+            502,
+            "ATTRIBUTION",
+            "사용자가 바란 일과 정한 일을 확인하지 못했어요. 다시 요청해 주세요.",
+          );
+        if (
+          result.mode === "continue" &&
+          result.sentences.some((sentence) =>
+            /오늘\s*(?:의\s*)?(?:다이어리|일기)(?:에는|에)|(?:다이어리|일기)에.{0,70}(?:남겨|적어|써)\s*(?:볼|보세요|보셔도)/.test(
+              sentence,
+            ),
+          )
+        )
+          throw new AppError(
+            502,
+            "QUESTION",
+            "대화를 이어갈 답변을 받지 못했어요. 다시 요청해 주세요.",
+          );
         const clarificationNote =
           plan.assumedReply && result.mode === "continue"
             ? "기대한 대답이 있었던 것처럼 제가 물었네요."

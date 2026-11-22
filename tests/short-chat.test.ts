@@ -519,6 +519,50 @@ for (const invalid of ["unsupported quote", "wrong speaker"] as const)
     assert.ok(result.diaryDraft);
     assert.equal(result.surveyReady, true);
   });
+test("conversation omits disguised extra questions and regenerates a premature diary", async () => {
+  const p = provider();
+  let attempts = 0;
+  p.ai.streamReply = async (_messages, _context, emit) => {
+    const sentences =
+      ++attempts === 1
+        ? ["오늘 다이어리에는 말을 끝까지 들어주는 게 중요하다고 남겨볼까요?"]
+        : ["어떤 말을 하려던 순간이었어요.", "친구에게 어떤 말을 이어서 하고 싶었어요?"];
+    const header = { mode: "continue" as const, safety: "normal" as const };
+    for (const sentence of sentences) await emit(sentence, header);
+    return { ...header, sentences };
+  };
+  const result = await runStreamingChat(
+    { ...args(), message: "친구가 제 말을 끊었어요." },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.equal(result.body, "친구에게 어떤 말을 이어서 하고 싶었어요?");
+  assert.equal(result.surveyReady, false);
+});
+test("an action the user wants to take is not presented as decided", async () => {
+  const p = provider();
+  let attempts = 0;
+  p.ai.streamReply = async (_messages, _context, emit) => {
+    const sentence =
+      ++attempts === 1
+        ? "사진을 보여주기로 하신 건 어떤 점이 마음에 걸려서예요?"
+        : "사진을 보여주고 싶은 마음이 드셨군요. 어떤 사진을 먼저 보여주고 싶으세요?";
+    const header = { mode: "continue" as const, safety: "normal" as const };
+    await emit(sentence, header);
+    return { ...header, sentences: [sentence] };
+  };
+  const result = await runStreamingChat(
+    { ...args(), message: "사진을 먼저 보여주고 싶어요." },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.doesNotMatch(result.body, /보여주기로/);
+  assert.match(result.body, /어떤 사진/);
+});
 test("SDK treats failed, incomplete, refusal and missing terminal streams as failures", async () => {
   const context = {
     emotion: selectionContext(emotion),
@@ -1432,7 +1476,7 @@ test("an explicit personal insight can finish without a separately stated wish",
   p.ai.reviewReadiness = async () => ({
     wish: "",
     meaning: "",
-    reaction: "혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
+    reaction: "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
     insight: "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
     next: "diary",
   });
@@ -1478,7 +1522,11 @@ test("natural diary needs user evidence for the wish, its meaning and the respon
     { role: "user" as const, content: "무시당한 기분이 드니까." },
     { role: "assistant" as const, content: "그럴 때는 말을 이어가나요?" },
   ];
-  for (const grounded of [false, true]) {
+  for (const [grounded, next, turns] of [
+    [false, "diary", 2],
+    [true, "diary", 2],
+    [true, "meaning", 5],
+  ] as const) {
     const { ai } = provider();
     const reaction = grounded ? "멈추게 돼" : "소리를 질러";
     ai.reviewReadiness = async () => ({
@@ -1486,7 +1534,7 @@ test("natural diary needs user evidence for the wish, its meaning and the respon
       meaning: "무시당한 기분",
       reaction: grounded ? "어떻게 반응하세요?에 대한 답: " + reaction : reaction,
       insight: "",
-      next: "diary",
+      next,
     });
     const ordinary = ai.streamReply;
     ai.streamReply = async (messages, context, emit) => {
@@ -1507,7 +1555,7 @@ test("natural diary needs user evidence for the wish, its meaning and the respon
         ...args(),
         history,
         message: "멈추게 돼",
-        progress: { ...freshProgress, turns: 2, questions: 2 },
+        progress: { ...freshProgress, turns, questions: turns },
       },
       new Gate(new LuaStore(), cap),
       ai,
