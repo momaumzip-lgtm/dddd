@@ -1651,32 +1651,24 @@ dialog .fine-print {
 }
 .intensity-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .intensity-options button {
-  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 12px;
-  min-height: 64px;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
+  word-break: keep-all;
 }
 .intensity-options button[aria-pressed="true"] {
-  border: 2px solid var(--green);
+  border-color: var(--green);
+  box-shadow: inset 0 0 0 1px var(--green);
   background: var(--soft);
-  padding: 11px;
-}
-.intensity-options button svg {
-  position: absolute;
-  right: 10px;
-  top: 12px;
-}
-.intensity-options span {
-  font-size: 0.85rem;
-  color: var(--muted);
 }
 .emotion-start {
   padding: 16px 0 4px;
@@ -1749,7 +1741,7 @@ dialog .fine-print {
     font-size: 0.75rem;
   }
   .intensity-options {
-    gap: 8px;
+    grid-template-columns: 1fr;
   }
 }
 

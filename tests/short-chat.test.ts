@@ -8,6 +8,7 @@ import {
   emotionSelectionSchema,
   correctedSelection,
   selectionContext,
+  selectionForClient,
 } from "../lib/emotions";
 import { freshProgress, responsePlan } from "../lib/conversation";
 import { ReplyFields } from "../lib/server/stream-fields";
@@ -27,7 +28,7 @@ const cap = { minute: 60, day: 100, global: 300 };
 const emotion = {
   ...unknownEmotion,
   emotionId: emotionCatalog.find((e) => e.label === "불안함")!.id,
-  intensityBand: "60_80" as const,
+  intensityBand: "high" as const,
   version: 1,
 };
 const args = () => ({
@@ -114,8 +115,21 @@ test("switching away from a custom emotion discards its text in incoming selecti
 });
 
 test("bands and unknown are categorical; corrections reset intensity and respect latest speech", () => {
-  for (const intensityBand of ["0_20", "20_40", "40_60", "60_80", "80_100", "unknown"])
-    assert.ok(emotionSelectionSchema.safeParse({ ...emotion, intensityBand }).success);
+  for (const [input, expected] of Object.entries({
+    low: "low",
+    medium: "medium",
+    high: "high",
+    unknown: "unknown",
+    "0_20": "low",
+    "20_40": "low",
+    "40_60": "medium",
+    "60_80": "high",
+    "80_100": "high",
+  }))
+    assert.equal(
+      emotionSelectionSchema.parse({ ...emotion, intensityBand: input }).intensityBand,
+      expected,
+    );
   assert.equal(emotionSelectionSchema.safeParse({ ...emotion, intensityBand: 50 }).success, false);
   assert.equal(
     correctedSelection(emotion, "화난 게 아니라 서운한 것 같아. 바쁜 건 알아.").intensityBand,
@@ -127,6 +141,15 @@ test("bands and unknown are categorical; corrections reset intensity and respect
     "서운함",
   );
 });
+test("responses match the scale used by an open tab and preserve a corrected emotion", () => {
+  const oldBand = "60_80";
+  const parsed = emotionSelectionSchema.parse({ ...emotion, intensityBand: oldBand });
+  assert.equal(parsed.intensityBand, "high");
+  assert.equal(selectionForClient(parsed, oldBand).intensityBand, oldBand);
+  assert.equal(selectionForClient(parsed, "high").intensityBand, "high");
+  assert.equal(selectionForClient(unknownEmotion, oldBand).intensityBand, "unknown");
+});
+
 test("four turns carry full ordered context and current emotion; signed completion is required to continue", async () => {
   const db = new LuaStore(),
     gate = new Gate(db, cap),
@@ -149,7 +172,7 @@ test("four turns carry full ordered context and current emotion; signed completi
       history: r.history,
       progress: r.progress,
       message: i === 0 ? "表の順番です。" : "修正順を知りたいです。",
-      emotion: { ...emotion, intensityBand: "20_40", version: 2 },
+      emotion: { ...emotion, intensityBand: "low", version: 2 },
     };
   }
   await assert.rejects(
@@ -204,7 +227,7 @@ test("high emotion alone is never a crisis; actual low-intensity danger bypasses
   const positive = {
     ...emotion,
     emotionId: emotionCatalog.find((e) => e.label === "기쁨")!.id,
-    intensityBand: "80_100" as const,
+    intensityBand: "high" as const,
   };
   const r = await runStreamingChat(
     { ...args(), emotion: positive, message: "시험에 붙었어요." },
@@ -216,7 +239,7 @@ test("high emotion alone is never a crisis; actual low-intensity danger bypasses
   const emergency = await runStreamingChat(
     {
       ...args(),
-      emotion: { ...emotion, intensityBand: "0_20" },
+      emotion: { ...emotion, intensityBand: "low" },
       message: "지금 약을 한꺼번에 많이 먹었어요.",
     },
     new Gate(new LuaStore(), cap),
@@ -499,12 +522,12 @@ test("latest request for practical help overrides an earlier listening preferenc
   );
 });
 test("intensity guidance changes with category and never converts unknown to a numerical score", () => {
-  const low = selectionContext({ ...emotion, intensityBand: "0_20" }),
-    high = selectionContext({ ...emotion, intensityBand: "80_100" }),
+  const low = selectionContext({ ...emotion, intensityBand: "low" }),
+    high = selectionContext({ ...emotion, intensityBand: "high" }),
     joy = selectionContext({
       ...emotion,
       emotionId: emotionCatalog.find((e) => e.label === "기쁨")!.id,
-      intensityBand: "80_100",
+      intensityBand: "high",
     });
   assert.notEqual(low.responseGuidance, high.responseGuidance);
   assert.notEqual(high.responseGuidance, joy.responseGuidance);
@@ -764,7 +787,7 @@ test("an extra question cannot discard an already useful reflection or trigger p
 });
 
 test("event contrasts preserve the selection; an explicit comparison updates only the named emotion", () => {
-  const initial = { ...emotion, intensityBand: "60_80" as const };
+  const initial = { ...emotion, intensityBand: "high" as const };
   assert.deepEqual(
     correctedSelection(initial, "채택 여부가 아니라 말을 끊은 상황에서 서운함이 남았어요."),
     initial,
@@ -1059,12 +1082,30 @@ test("a spontaneous diary can be edited while the next message uses the same ope
       perspectiveQuote: "내가 먼저 시간을 확인할래요",
     };
   };
-  const offered = await runStreamingChat(second, gate, model, () => {});
+  let current = second;
+  for (const message of ["조금 더 이야기할게요.", "일정을 알고 나면 편해져요."]) {
+    await assert.rejects(
+      runStreamingChat(current, gate, model, () => assert.fail("early summary")),
+      /정리에 담을 내용/,
+    );
+    const rid = id();
+    const continued = await runStreamingChat({ ...current, rid }, gate, p.ai, () => {});
+    await gate.acknowledge(base.sid, base.cid, rid, continued.revision);
+    current = {
+      ...current,
+      history: continued.history,
+      progress: continued.progress,
+      revision: continued.revision,
+      rid: id(),
+      message,
+    };
+  }
+  const offered = await runStreamingChat(current, gate, model, () => {});
   assert.ok(offered.diaryDraft);
   assert.ok(offered.body.endsWith(DIARY_INVITATION));
   assert.equal(offered.progress.completed, false);
   assert.equal(offered.surveyReady, true);
-  await gate.acknowledge(base.sid, base.cid, second.rid, offered.revision);
+  await gate.acknowledge(base.sid, base.cid, current.rid, offered.revision);
   const next = await runStreamingChat(
     {
       ...second,
@@ -1078,13 +1119,14 @@ test("a spontaneous diary can be edited while the next message uses the same ope
     p.ai,
     () => {},
   );
-  assert.equal(next.progress.turns, 3);
+  assert.equal(next.progress.turns, 5);
   assert.equal(next.progress.completed, false);
 });
 
 test("immediate endings and ordinary reluctance are separate intentions", () => {
   for (const value of [
     "바로 끝내줘",
+    "오늘은 이만 마무리해 주세요.",
     "이유는 아직 모르겠고 오늘은 여기까지 할래요",
     "대화를 끝내 주세요.",
   ])

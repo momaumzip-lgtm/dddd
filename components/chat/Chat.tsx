@@ -432,7 +432,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                   {emotion ? emotionLabel(emotion) : "미정"} ·{" "}
                   {emotion?.intensityBand === "unknown"
                     ? "강도 미정"
-                    : intensityBands.find((b) => b.id === emotion?.intensityBand)?.label ||
+                    : intensityBands.find((b) => b.id === emotion?.intensityBand)?.shortLabel ||
                       "강도 미정"}
                 </span>
                 <button onClick={() => setPanel("emotion")}>바꾸기</button>

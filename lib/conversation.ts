@@ -10,7 +10,7 @@ export const progressSchema = z
 export type Progress = z.infer<typeof progressSchema>;
 export const freshProgress: Progress = { turns: 0, questions: 0, completed: false };
 export const wantsFinish = (text: string) =>
-  /(?:^|[,.!?]\s*|\s+(?=오늘은|이제|여기까지)|(?:대화는?|대화를)\s+)(?:(?:지금|이제|오늘은|그냥|바로)\s*)*(?:정리해\s*(?:줘|주세요)?|그만할(?:래|게)(?:요)?|끝내(?:자|\s*(?:줘|주세요))|마무리(?:할게요?|해\s*(?:줘|주세요))|여기까지(?:\s*할(?:래|게)요?)?)[.!\s]*$/.test(
+  /(?:^|[,.!?]\s*|\s+(?=오늘은|이제|여기까지)|(?:대화는?|대화를)\s+)(?:(?:지금|이제|오늘은|이만|그냥|바로)\s*)*(?:정리해\s*(?:줘|주세요)?|그만할(?:래|게)(?:요)?|끝내(?:자|\s*(?:줘|주세요))|마무리(?:할게요?|해\s*(?:줘|주세요))|여기까지(?:\s*할(?:래|게)요?)?)[.!\s]*$/.test(
     text.trim(),
   );
 export const wantsListening = (text: string) =>
@@ -76,10 +76,11 @@ export function responsePlan(
     action === "summary" || wantsFinish(latest) || (!skipDiary && asksToRecordNow);
   const exploring =
     !forceComplete &&
-    !/(?:이야기|살펴보|알아보|탐색|얘기).{0,8}(?:싶지|싫|그만)/.test(latest) &&
-    /(?:더|계속|깊이).{0,10}(?:이야기|살펴보|알아보|탐색|얘기).{0,6}(?:싶|할래|해보|볼래)/.test(
-      latest,
-    );
+    (current.turns < 3 ||
+      (!/(?:이야기|살펴보|알아보|탐색|얘기).{0,8}(?:싶지|싫|그만)/.test(latest) &&
+        /(?:더|계속|깊이).{0,10}(?:이야기|살펴보|알아보|탐색|얘기).{0,6}(?:싶|할래|해보|볼래)/.test(
+          latest,
+        )));
   // A direct request for wording calls for an answer. An ordinary account, even a detailed one, opens exploration.
   const asksForWording =
     /(?:문자|메시지|답장|표현|문구).{0,35}(?:써\s*(?:줘|주세요)|쓰면|작성해|추천해)|어떻게\s*(?:말하면|전하면|답하면|쓰면)/.test(

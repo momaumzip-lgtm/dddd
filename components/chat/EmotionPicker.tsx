@@ -19,7 +19,7 @@ export default function EmotionPicker({
 }) {
   const [chosen, setChosen] = useState<string | null>(value?.emotionId || null),
     [band, setBand] = useState<EmotionSelection["intensityBand"] | null>(
-      value?.intensityBand || null,
+      value && value.intensityBand !== "unknown" ? value.intensityBand : null,
     ),
     [custom, setCustom] = useState(value?.customLabel || "");
   const [category, setCategory] = useState("all"),
@@ -65,8 +65,7 @@ export default function EmotionPicker({
       </h1>
       {expanded && (
         <p>
-          AI와 짧게 이야기하고 내 마음을 한두 문장으로 남겨보세요. 대화는 약 3~5분을 생각하고 시작해
-          보세요.
+          지금 마음에 가까운 감정을 골라보세요. 대화를 나눈 뒤 원할 때 한두 문장으로 남길 수 있어요.
         </p>
       )}
       {chosen && !expanded ? (
@@ -189,7 +188,6 @@ export default function EmotionPicker({
               >
                 {band === b.id && <Check size={16} />}
                 <strong>{b.label}</strong>
-                <span>{b.description}</span>
               </button>
             ))}
           </div>
@@ -200,7 +198,7 @@ export default function EmotionPicker({
           {expanded
             ? "마음에 가까운 단어를 먼저 골라주세요."
             : band === null
-              ? "강도를 고르거나 ‘잘 모르겠어요’를 선택해 주세요."
+              ? "지금 느끼는 강도를 하나 골라주세요."
               : "고른 마음으로 짧게 이야기해 볼게요."}
         </p>
         <button className="primary" disabled={!valid} onClick={() => onDone(selection)}>

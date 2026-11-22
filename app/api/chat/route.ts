@@ -1,3 +1,4 @@
+import { selectionForClient } from "@/lib/emotions";
 import { NextRequest } from "next/server";
 import { chatSchema, MAX_HISTORY_MESSAGES } from "@/lib/server/schemas";
 import { validateState, state } from "@/lib/server/session";
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest) {
               diaryDraft: result.diaryDraft,
               turns: result.progress.turns,
               questions: result.progress.questions,
-              emotion: result.emotion,
+              emotion: selectionForClient(result.emotion, raw?.emotion?.intensityBand),
               conversationLimit: result.history.length >= MAX_HISTORY_MESSAGES,
               timing: {
                 promptVersion: PROMPT_VERSION,
