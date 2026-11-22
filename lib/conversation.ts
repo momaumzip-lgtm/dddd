@@ -134,6 +134,16 @@ export function responsePlan(
     /(?:문자|메시지|답장|표현|문구).{0,35}(?:써\s*(?:줘|주세요)|쓰면|작성해|추천해)|어떻게\s*(?:말하면|전하면|답하면|쓰면)/.test(
       latest,
     );
+  const asksForPracticalHelp =
+    /(?:프로젝트|업무|작업|보고서|일정|마감|우선순위|할 일).{0,40}(?:계획.{0,12}(?:짜|잡|세워)|(?:짜|정리해|나눠|잡아|도와)\s*(?:줘|주세요)|(?:방법|순서).{0,10}(?:알려|가르쳐))|수정\s*순서.{0,8}알려/.test(
+      latest,
+    ) && !/(?:라고 했|라고 하더|라고 들|라고 부탁했)/.test(latest);
+  if (asksForPracticalHelp) listening = false;
+  const workReflection =
+    !asksForPracticalHelp &&
+    [...history.filter((m) => m.role === "user").map((m) => m.content), latest].some((text) =>
+      /회사|업무|프로젝트|팀장|직장|출근|퇴근|마감|보고서/.test(text),
+    );
   const firstInput = action === "chat" && progress.turns === 0 && history.length === 0;
   // A brief feeling or an uncertain answer can stand on its own for this turn.
   const previous = history.at(-1);
@@ -158,7 +168,8 @@ export function responsePlan(
               ))))))
   )
     listening = true;
-  const openingQuestion = firstInput && !forceComplete && !listening && !asksForWording;
+  const openingQuestion =
+    firstInput && !forceComplete && !listening && !asksForWording && !asksForPracticalHelp;
   const clarifyQuestion =
     !forceComplete &&
     !listening &&
@@ -179,6 +190,7 @@ export function responsePlan(
     !forceComplete &&
     !listening &&
     !asksForWording &&
+    !asksForPracticalHelp &&
     (clarifyQuestion || !/[?？]$/.test(latest.trim()));
   // A new segment after "continue" needs its own evidence before it can finish.
   const mayReflect =
@@ -200,6 +212,8 @@ export function responsePlan(
     clarifyQuestion,
     assumedReply,
     mayReflect,
+    asksForPracticalHelp,
+    workReflection,
     listening,
     briefDisappointment,
     firstInput,

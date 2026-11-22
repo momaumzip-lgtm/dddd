@@ -24,7 +24,18 @@ export const reflectionReadiness = z
     wish: z.string().max(200),
     meaning: z.string().max(200),
     reaction: z.string().max(200),
-    next: z.enum(["wish", "meaning", "similar", "reaction", "continue", "diary"]),
+    insight: z.string().max(200),
+    next: z.enum([
+      "thought",
+      "fact",
+      "wish",
+      "meaning",
+      "similar",
+      "reaction",
+      "perspective",
+      "continue",
+      "diary",
+    ]),
   })
   .strict();
 type Readiness = z.infer<typeof reflectionReadiness>;
@@ -37,8 +48,9 @@ export type StreamContext = {
   openingQuestion?: boolean;
   recordCorrection?: boolean;
   clarifyQuestion?: boolean;
+  asksForPracticalHelp?: boolean;
   reflectionStep?: Readiness["next"];
-  diaryEvidence?: Pick<Readiness, "wish" | "meaning" | "reaction">;
+  diaryEvidence?: Pick<Readiness, "wish" | "meaning" | "reaction" | "insight">;
   turn: number;
   previousSafety: Safety;
 };
@@ -98,6 +110,9 @@ function selectSentences(
     const marks = sentence.match(/[?？؟﹖]/g)?.length ?? 0;
     const question =
       marks > 0 ||
+      /(?:느낀|마음에 남은|떠오른|기억나는|힘들었던).{0,18}(?:순간|때|생각|일|말|것)(?:이|은)?\s*있었어요[.。]+$/.test(
+        sentence,
+      ) ||
       /(?:어떻게|뭐|무슨|어떤).*(?:했어요|받았어요|들었어요|였어요|있었어요|싶었어요)요?[.。]+$/.test(
         sentence,
       ) ||
@@ -221,7 +236,13 @@ export async function runStreamingChat(
       };
       let reflectionStep: Readiness["next"] | undefined;
       let diaryEvidence: StreamContext["diaryEvidence"];
-      if (plan.mayReflect) {
+      const reviewWorkIntroduction =
+        plan.workReflection &&
+        plan.followupQuestion &&
+        !plan.clarifyQuestion &&
+        !plan.skipDiary &&
+        plan.current.turns === 1;
+      if (plan.mayReflect || reviewWorkIntroduction) {
         await slot.extra();
         const segment = messages.slice(-(plan.current.turns * 2 + 1));
         const review = await ai.reviewReadiness(segment);
@@ -248,21 +269,61 @@ export async function runStreamingChat(
             reaction,
           );
         reflectionStep = review.next;
+        const latest = args.message;
+        if (
+          reflectionStep === "thought" &&
+          grounded(reaction) &&
+          /(?:것|거)\s*같|해야\s*한다|해야\s*(?:할|돼)|라고\s*생각|일까\s*봐/.test(reaction)
+        ) {
+          reflectionStep = /(?:것|거)\s*같|일까\s*봐/.test(reaction) ? "fact" : "meaning";
+        }
+        if (
+          reflectionStep === "similar" &&
+          (/(?:종종|가끔|자주|전에도|예전에도|항상|그럴\s*때마다)/.test(latest) ||
+            segment.some(
+              (m) =>
+                m.role === "assistant" &&
+                /(?:비슷한|이런|그런).{0,22}(?:전에도|예전에도|적이)|(?:전에도|예전에도).{0,22}(?:있었|경험)/.test(
+                  m.content,
+                ),
+            ))
+        )
+          reflectionStep = hasReaction ? "perspective" : "reaction";
+        if (reflectionStep === "meaning" && hasMeaning)
+          reflectionStep = hasReaction ? "perspective" : "reaction";
+        const insight = review.insight.replace(/\s+/g, "");
+        const hasInsight =
+          insight.length >= 7 &&
+          grounded(insight) &&
+          [wish, meaning, reaction].some((quote) => grounded(quote) && insight !== quote);
         const answeredReaction =
           review.next === "reaction" && reaction === latestWords && reaction !== meaning;
+        const connectedExperience = grounded(wish) && hasMeaning && hasReaction;
         if (
-          (review.next === "diary" || answeredReaction) &&
-          grounded(wish) &&
-          hasMeaning &&
-          hasReaction
+          plan.workReflection &&
+          !hasInsight &&
+          !connectedExperience &&
+          /면.{0,26}(?:걸까\s*봐|될까\s*봐|(?:것|거)\s*같)|일까\s*봐/.test(latest) &&
+          !/실제로|직접.{0,14}(?:말|들)|아무도|분명히.{0,10}했/.test(latest)
+        )
+          reflectionStep = "fact";
+        if (
+          plan.mayReflect &&
+          ((review.next === "diary" && (hasInsight || connectedExperience)) ||
+            (answeredReaction && connectedExperience))
         ) {
           reflectionStep = "diary";
           diaryEvidence = {
-            wish: review.wish,
-            meaning: review.meaning,
-            reaction: reaction === latestWords ? args.message : review.reaction,
+            wish: grounded(wish) ? review.wish : "",
+            meaning: hasMeaning ? review.meaning : "",
+            reaction: hasReaction
+              ? reaction === latestWords
+                ? args.message
+                : review.reaction
+              : "",
+            insight: hasInsight ? review.insight : "",
           };
-        } else if (review.next === "diary")
+        } else if (reflectionStep === "diary")
           reflectionStep = !grounded(wish) ? "wish" : !hasMeaning ? "meaning" : "reaction";
       }
       const finish = plan.forceComplete || reflectionStep === "diary";
@@ -290,6 +351,7 @@ export async function runStreamingChat(
             openingQuestion: plan.openingQuestion,
             recordCorrection: plan.recordCorrection,
             clarifyQuestion: plan.clarifyQuestion,
+            asksForPracticalHelp: plan.asksForPracticalHelp,
             turn: plan.current.turns + 1,
             previousSafety: safety,
           },
@@ -379,11 +441,38 @@ export async function runStreamingChat(
             "다음 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
           );
         if (result.diaryDraft) {
-          const diaryDraft = result.diaryDraft.replace(
+          const ownInsight = diaryEvidence?.insight
+            ? Array.from(sentenceBoundaries.segment(diaryEvidence.insight), (part) =>
+                part.segment.trim(),
+              ).at(-1)
+            : undefined;
+          // If the user already voiced the discovery as a diary sentence, keep their wording.
+          const draft =
+            ownInsight && ownInsight.length <= 220 && /^[^?？!"“”\n]+구나[.。]?$/.test(ownInsight)
+              ? ownInsight
+              : result.diaryDraft;
+          const diaryDraft = draft.replace(
             /(^|\s)([가-힣]{2,10}(?:이|가|은|는|을|를))\s+\2(?=\s|[,.!?。]|$)/g,
             "$1$2",
           );
           result = { ...result, diaryDraft };
+        }
+        const question = result.sentences.at(-1) ?? "";
+        if (
+          plan.workReflection &&
+          result.mode === "continue" &&
+          !plan.listening &&
+          /[?？]$/.test(question) &&
+          /(?:프로젝트|업무|작업|일정|마감|진행률|보고서|일을).{0,30}(?:어디까지|몇\s*(?:퍼센트|%|개)|어느\s*단계|언제까지|완료|끝내[야려]|얼마나\s*(?:남|진행)|우선순위)|(?:어떤|어느)\s*(?:부분|단계|작업|기능).{0,16}(?:막혔|안\s*(?:됐|되)|완료|남았)|(?:마감|기한)(?:이|은|는)?\s*(?:언제|며칠)/.test(
+            question,
+          ) &&
+          !/기분|느낌|생각|마음|버겁|부담|긴장|압박|쉬고|걱정/.test(question)
+        ) {
+          throw new AppError(
+            502,
+            "QUESTION",
+            "지금 이야기와 이어지는 질문을 받지 못했어요. 입력은 그대로 남아 있어요.",
+          );
         }
         const reviewStart = performance.now();
         // Review cumulative text and the diary in one request. A subsequent edit or
@@ -493,7 +582,12 @@ export async function runStreamingChat(
           "다음 질문을 끝까지 받지 못했어요. 같은 입력으로 다시 요청할 수 있어요.",
         );
       if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
-        const quotes = [result.sourceQuote, diaryEvidence?.reaction, diaryEvidence?.wish];
+        const quotes = [
+          result.sourceQuote,
+          diaryEvidence?.insight,
+          diaryEvidence?.reaction,
+          diaryEvidence?.wish,
+        ];
         const hasSource = quotes.some(
           (quote) =>
             quote?.trim() &&

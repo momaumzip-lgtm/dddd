@@ -1,4 +1,4 @@
-import { BRIEF_PROMPT } from "../lib/server/prompts";
+import { BRIEF_PROMPT, REFLECTION_GOALS } from "../lib/server/prompts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -52,7 +52,13 @@ function provider(mode = "continue"): {
   return {
     calls,
     ai: {
-      reviewReadiness: async () => ({ wish: "", meaning: "", reaction: "", next: "continue" }),
+      reviewReadiness: async () => ({
+        wish: "",
+        meaning: "",
+        reaction: "",
+        insight: "",
+        next: "continue",
+      }),
       checkAttribution: async () => ({ edits: [] }),
       moderateOutputs: async (texts) => texts.map(() => false),
       moderate: async () => ({ flagged: false, categories: {} }),
@@ -1169,7 +1175,11 @@ test("the opening SDK contract streams reflection before its required question a
         const state = JSON.parse(request.instructions.split("검증된 현재 상태(JSON 데이터): ")[1]);
         const { responseGuidance: _guidance, ...selectedEmotion } = context.emotion;
         assert.deepEqual(state.emotion, selectedEmotion);
-        assert.ok(request.instructions.startsWith(BRIEF_PROMPT + "\n\n[앱 연동 규칙]"));
+        assert.ok(
+          request.instructions.startsWith(
+            BRIEF_PROMPT + "\n\n" + REFLECTION_GOALS + "\n\n[앱 연동 규칙]",
+          ),
+        );
         const wire = JSON.stringify({
           reply: { mode: "continue", safety: "normal", sentences: [lines[0]], question: lines[1] },
         });
@@ -1313,6 +1323,109 @@ test("clarifying an expectation introduced by the assistant does not ask for the
     false,
   );
 });
+test("a work story rejects questions about progress while requests for practical help can be answered", async () => {
+  const p = provider();
+  const visible: string[] = [];
+  let attempts = 0;
+  p.ai.streamReply = async (_messages, context, emit) => {
+    assert.equal(context.openingQuestion, true);
+    const sentences = [
+      "일이 몰린 하루가 버거우셨겠어요.",
+      ++attempts === 1
+        ? "프로젝트를 어디까지 끝내야 하나요?"
+        : "일하다 유난히 버겁다고 느낀 순간이 있었어요?",
+    ];
+    for (const sentence of sentences) await emit(sentence, { mode: "continue", safety: "normal" });
+    return { mode: "continue", safety: "normal", sentences };
+  };
+  const result = await runStreamingChat(
+    { ...args(), message: "회사 프로젝트가 바빠서 힘들었어." },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    (text) => visible.push(text),
+  );
+  assert.equal(attempts, 2);
+  assert.equal(result.progress.completed, false);
+  assert.doesNotMatch(visible.join(""), /어디까지/);
+  const request = responsePlan(freshProgress, "chat", "프로젝트 일정을 짜 주세요.", []);
+  assert.equal(request.asksForPracticalHelp, true);
+  assert.equal(request.workReflection, false);
+  assert.equal(request.openingQuestion, false);
+});
+
+test("a worry about a work mistake is a thought to check, with no automatic close", async () => {
+  const p = provider();
+  const message = "제가 하나라도 놓치면 다 꼬일 것 같아서 퇴근하고도 메시지를 확인했어요.";
+  p.ai.reviewReadiness = async () => ({
+    wish: "",
+    meaning: "",
+    reaction: message,
+    insight: message,
+    next: "diary",
+  });
+  await runStreamingChat(
+    {
+      ...args(),
+      progress: { ...freshProgress, turns: 2, questions: 2 },
+      history: [
+        { role: "user", content: "회사 프로젝트 때문에 힘들었어요." },
+        { role: "assistant", content: "언제 마음이 급해졌어요?" },
+        { role: "user", content: "요청이 한꺼번에 왔을 때요." },
+        { role: "assistant", content: "어떤 생각이 스쳤어요?" },
+      ],
+      message,
+    },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    () => {},
+  );
+  assert.equal(p.calls[0].context.reflectionStep, "fact");
+  assert.equal(p.calls[0].context.forceComplete, false);
+});
+test("an explicit personal insight can finish without a separately stated wish", async () => {
+  const p = provider();
+  p.ai.reviewReadiness = async () => ({
+    wish: "",
+    meaning: "",
+    reaction: "혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
+    insight: "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
+    next: "diary",
+  });
+  p.ai.streamReply = async (_messages, context, emit) => {
+    assert.equal(context.forceComplete, true);
+    const sentence = "혼자 책임져야 한다는 생각이 힘을 더 들게 했다는 걸 알아차리셨군요.";
+    await emit(sentence, { mode: "complete", safety: "normal" });
+    return {
+      mode: "complete",
+      safety: "normal",
+      sentences: [sentence],
+      sourceQuote: "혼자 책임져야 한다는 생각 때문에",
+      diaryDraft: "퇴근 후에도 업무 메시지를 확인했구나.",
+    };
+  };
+  const result = await runStreamingChat(
+    {
+      ...args(),
+      progress: { ...freshProgress, turns: 2, questions: 2 },
+      history: [
+        { role: "user", content: "회사 프로젝트가 바빠서 힘들었어." },
+        { role: "assistant", content: "일을 하다 유난히 힘든 순간이 있었어요?" },
+        { role: "user", content: "제가 놓치면 다 꼬일 것 같았어요." },
+        { role: "assistant", content: "실제로 혼자 맡아야 했던 건가요?" },
+      ],
+      message: "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
+    },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    () => {},
+  );
+  assert.equal(result.progress.completed, true);
+  assert.equal(result.surveyReady, true);
+  assert.equal(
+    result.diaryDraft,
+    "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
+  );
+});
 test("natural diary needs user evidence for the wish, its meaning and the response", async () => {
   const history = [
     { role: "user" as const, content: "끝까지 들어줬으면 했어." },
@@ -1327,6 +1440,7 @@ test("natural diary needs user evidence for the wish, its meaning and the respon
       wish: "끝까지 들어줬으면",
       meaning: "무시당한 기분",
       reaction: grounded ? "어떻게 반응하세요?에 대한 답: " + reaction : reaction,
+      insight: "",
       next: "diary",
     });
     const ordinary = ai.streamReply;
