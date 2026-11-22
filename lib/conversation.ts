@@ -14,7 +14,7 @@ export const wantsFinish = (text: string) =>
     text.trim(),
   );
 export const wantsListening = (text: string) =>
-  /(?:그냥|말만|얘기만|이야기만)\s*들어(?:\s*(?:줘|주|줬)|[.!?\s]*$)|들어\s*만\s*(?:줘|주)|묻지\s*(?:말|마)|질문(?:은|을|도)?\s*(?:없이|말고|그만|빼|싫|원하지|하지\s*(?:말|마))|질문.{0,6}받고\s*싶지/.test(
+  /(?:그냥|말만|얘기만|이야기만)\s*들어(?:\s*(?:줘(?:요)?|주세요|주실래요)(?=[.!?\s]*$)|[.!?\s]*$)|들어\s*만\s*(?:줘|주)|묻지\s*(?:말|마)|질문(?:은|을|도)?\s*(?:없이|말고|그만|빼|싫|원하지|하지\s*(?:말|마))|질문.{0,6}받고\s*싶지/.test(
     text,
   );
 
@@ -61,6 +61,39 @@ function requestsDiaryNow(text: string) {
   const wantsOneLine =
     /^한\s*(?:줄|문장)(?:으로|로)?\s*(?:기록하고|적고|남기고)\s*싶(?:어|어요|습니다)$/.test(clause);
   return asksForDraft || asksForLine || wantsDraftHere || wantsOneLine;
+}
+
+// A short question can refer to our last prompt, rather than describe a new event.
+function asksAboutQuestion(text: string) {
+  const lastClause =
+    text
+      .trim()
+      .replace(/[?？.!…。]+$/, "")
+      .split(/[.!?？。\n]/)
+      .at(-1) || "";
+  const words = lastClause.replace(/\s+/g, "").replace(/^(?:근데|그런데|그럼)/, "");
+  const referent = words.replace(/^(?:그게|그건|그거|방금질문은|그질문은|여기서)/, "");
+  if (
+    /(?:이냐는말은|이라는말은|라는말은|라는질문은)무슨뜻(?:이야|이에요|인가요|이죠)?$/.test(
+      referent,
+    )
+  )
+    return true;
+  if (
+    /^(?:무슨|어떤|누구의?)(?:뜻|말|소리|반응|기대|대답|도움|상황)(?:이야|이죠|이에요|인데요|예요|이요|요|인가요|인지(?:잘)?모르겠(?:어|어요))?$/.test(
+      referent,
+    )
+  )
+    return true;
+  if (
+    /^(?:무슨|어떤)(?:뜻|말|반응|기대|도움)(?:을|를)?(?:말하는|말씀하시는|묻는)(?:거|건)(?:야|예요|가요|데요)?$/.test(
+      referent,
+    )
+  )
+    return true;
+  return /^(?:(?:그|방금)?질문(?:이|을)?(?:이해가?안(?:돼|돼요|가요)|어렵네요)|(?:다시|쉽게)(?:물어봐|물어봐줘|물어봐주세요|말해줘|설명해주세요))$/.test(
+    words,
+  );
 }
 
 export function responsePlan(
@@ -117,24 +150,61 @@ export function responsePlan(
     (briefDisappointment ||
       (previous?.role === "assistant" &&
         /[?？]\s*$/.test(previous.content) &&
-        (onlyExpressesUncertainty(latest) || shortNegativeAnswer)))
+        (shortNegativeAnswer ||
+          (onlyExpressesUncertainty(latest) &&
+            (/어려|어렵|기억/.test(latest) ||
+              onlyExpressesUncertainty(
+                history.filter((m) => m.role === "user").at(-1)?.content || "",
+              ))))))
   )
     listening = true;
   const openingQuestion = firstInput && !forceComplete && !listening && !asksForWording;
+  const clarifyQuestion =
+    !forceComplete &&
+    !listening &&
+    previous?.role === "assistant" &&
+    /[?？]/.test(previous.content) &&
+    asksAboutQuestion(latest);
+  // "What reaction?" can call out an expectation introduced by our own question.
+  const assumedReply =
+    clarifyQuestion &&
+    /(?:바랐던|바라는|기대(?:한|했던))\s*(?:반응|대답)|(?:반응|대답)(?:을|이)?\s*(?:바랐|기대)/.test(
+      previous.content,
+    ) &&
+    ![...history.filter((m) => m.role === "user").map((m) => m.content), latest].some((text) =>
+      /바랐|바라는|기대했|원했|(?:줬|줬으|했으)면\s*(?:했|좋)|듣고\s*싶/.test(text),
+    );
+  const followupQuestion =
+    !firstInput &&
+    !forceComplete &&
+    !listening &&
+    !asksForWording &&
+    (clarifyQuestion || !/[?？]$/.test(latest.trim()));
+  // A new segment after "continue" needs its own evidence before it can finish.
+  const mayReflect =
+    followupQuestion &&
+    !skipDiary &&
+    !clarifyQuestion &&
+    !onlyExpressesUncertainty(latest) &&
+    current.turns >= 2 &&
+    !/(?:더|계속|아직).{0,15}(?:얘기|이야기|알고|말하고|살펴|궁금|생각나)|(?:끝내|마치|정리하)고\s*싶지/.test(
+      latest,
+    );
   return {
     current,
     forceComplete,
-    followupQuestion:
-      !firstInput &&
-      !forceComplete &&
-      !listening &&
-      !asksForWording &&
-      !/[?？]$/.test(latest.trim()),
+    recordCorrection:
+      forceComplete &&
+      /반대로|정정|잘못\s*(?:말|썼|적)|바꿔\s*말|고쳐\s*(?:써|줘|주세요)/.test(latest),
+    followupQuestion,
+    clarifyQuestion,
+    assumedReply,
+    mayReflect,
     listening,
+    briefDisappointment,
     firstInput,
     openingQuestion,
     skipDiary: skipDiary || listening,
   };
 }
-export const DIARY_INVITATION =
-  "지금까지 나눈 이야기로 짧은 기록을 만들었어요. 내 말에 맞게 고치거나, 남기고 싶을 때 복사해 두세요.";
+export const DIARY_INVITATION = "오늘 다이어리에는 이 한 줄을 남겨보세요.";

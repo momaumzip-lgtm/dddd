@@ -19,6 +19,15 @@ export type StreamReply = z.infer<typeof streamReplySchema> & {
   diaryDraft?: string;
   sourceQuote?: string;
 };
+export const reflectionReadiness = z
+  .object({
+    wish: z.string().max(200),
+    meaning: z.string().max(200),
+    reaction: z.string().max(200),
+    next: z.enum(["wish", "meaning", "similar", "reaction", "continue", "diary"]),
+  })
+  .strict();
+type Readiness = z.infer<typeof reflectionReadiness>;
 export type StreamContext = {
   emotion: ReturnType<typeof selectionContext>;
   forceComplete: boolean;
@@ -26,10 +35,15 @@ export type StreamContext = {
   skipDiary?: boolean;
   followupQuestion?: boolean;
   openingQuestion?: boolean;
+  recordCorrection?: boolean;
+  clarifyQuestion?: boolean;
+  reflectionStep?: Readiness["next"];
+  diaryEvidence?: Pick<Readiness, "wish" | "meaning" | "reaction">;
   turn: number;
   previousSafety: Safety;
 };
 export interface StreamingProvider {
+  reviewReadiness(messages: Message[]): Promise<Readiness>;
   moderateOutputs(texts: string[]): Promise<boolean[]>;
   checkAttribution: Parameters<typeof preserveAttribution>[2];
   moderate(text: string): Promise<{ flagged: boolean; categories: unknown }>;
@@ -50,10 +64,17 @@ export interface StreamingProvider {
     onFirstText?: () => void,
   ): Promise<StreamReply>;
 }
-function containsInternalOutput(reply: StreamReply) {
-  return hasOutputInstructions([...reply.sentences, reply.diaryDraft || ""].join(" "));
+function unreadableReply(reply: StreamReply) {
+  const fields = [...reply.sentences, ...(reply.diaryDraft ? [reply.diaryDraft] : [])];
+  return (
+    hasOutputInstructions(fields.join(" ")) ||
+    fields.some(
+      (text) =>
+        !/[가-힣]/.test(text) ||
+        /[\u0000-\u0008\u000e-\u001f]|assistant to=|brief_reply|output valid JSON/i.test(text),
+    )
+  );
 }
-
 const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
 function selectSentences(text: string, allowQuestion: boolean, diarySummary: boolean) {
   const kept: string[] = [];
@@ -72,7 +93,7 @@ function selectSentences(text: string, allowQuestion: boolean, diarySummary: boo
     const marks = sentence.match(/[?？؟﹖]/g)?.length ?? 0;
     const question =
       marks > 0 ||
-      /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
+      /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|싶으세요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
         sentence,
       );
     if (question) {
@@ -186,16 +207,58 @@ export async function runStreamingChat(
         outputCheckMs += performance.now() - start;
         return check.flagged;
       };
+      let reflectionStep: Readiness["next"] | undefined;
+      let diaryEvidence: StreamContext["diaryEvidence"];
+      if (plan.mayReflect) {
+        await slot.extra();
+        const segment = messages.slice(-(plan.current.turns * 2 + 1));
+        const review = await ai.reviewReadiness(segment);
+        const userWords = segment
+          .filter((m) => m.role === "user")
+          .map((m) => m.content.replace(/\s+/g, ""));
+        const [wish, meaning, reaction] = [review.wish, review.meaning, review.reaction].map((q) =>
+          q.replace(/\s+/g, ""),
+        );
+        const grounded = (q: string) => q.length >= 2 && userWords.some((s) => s.includes(q));
+        const hasMeaning = grounded(meaning) && !wish.includes(meaning) && !meaning.includes(wish);
+        const hasReaction =
+          grounded(reaction) &&
+          reaction !== wish &&
+          !/^(?:(?:네|응|맞아|그래요|가끔|종종|자주|전에도|몇번|가끔씩)(?:있었(?:어요|어)|그래요|있어요)?)[.!。]*$/.test(
+            reaction,
+          );
+        reflectionStep = review.next;
+        if (grounded(wish) && hasMeaning && hasReaction && review.next !== "continue") {
+          reflectionStep = "diary";
+          diaryEvidence = { wish: review.wish, meaning: review.meaning, reaction: review.reaction };
+        } else if (review.next === "diary")
+          reflectionStep = !grounded(wish) ? "wish" : !hasMeaning ? "meaning" : "reaction";
+      }
+      const finish = plan.forceComplete || reflectionStep === "diary";
+      const emotionContext = selectionContext(emotion);
+      const losesSpeaker = (reply: StreamReply) =>
+        plan.openingQuestion &&
+        emotionContext.category === "positive" &&
+        reply.mode === "continue" &&
+        reply.sentences.some((sentence) =>
+          /(?:^|[^가-힣])(?:제가|내가|저는|나는|제|내)\s/.test(
+            sentence.replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'/g, ""),
+          ),
+        );
       const generate = () =>
         ai.streamReply(
           messages,
           {
-            emotion: selectionContext(emotion),
-            forceComplete: plan.forceComplete,
+            emotion: emotionContext,
+            forceComplete: finish,
+            reflectionStep,
+            diaryEvidence,
             listening: plan.listening,
             skipDiary: plan.skipDiary,
             followupQuestion: plan.followupQuestion,
             openingQuestion: plan.openingQuestion,
+            recordCorrection: plan.recordCorrection,
+            clarifyQuestion: plan.clarifyQuestion,
             turn: plan.current.turns + 1,
             previousSafety: safety,
           },
@@ -224,38 +287,63 @@ export async function runStreamingChat(
             modelFirstTextMs = performance.now() - started;
           },
         );
-      let result = await generate();
-      if (!suppressed && containsInternalOutput(result)) {
-        // None of the draft has been published. Retry once with the same context.
-        await slot.extra();
-        received.length = 0;
-        mode = "continue";
-        result = await generate();
-        if (!suppressed && containsInternalOutput(result))
+      const prepareReply = async () => {
+        const generationStarted = performance.now();
+        let result = await generate();
+        generationMs += performance.now() - generationStarted;
+        if (suppressed) return result;
+        if (unreadableReply(result) || losesSpeaker(result))
           throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
-      }
-      generationMs = performance.now() - genStart;
-      if (!suppressed) {
         if (
           mode !== result.mode ||
           received.length !== result.sentences.length ||
           received.some((sentence, i) => sentence.trim() !== result.sentences[i].trim())
         )
           throw new AppError(502, "STREAM_FORMAT", "답변 내용을 확인하지 못했어요.");
-        if (!plan.forceComplete && (result.mode === "complete" || result.mode === "close"))
+        if (!finish && (result.mode === "complete" || result.mode === "close"))
           throw new AppError(
             502,
             "MODE",
             "대화를 이어갈 답변을 받지 못했어요. 다시 요청해 주세요.",
           );
-        if (plan.forceComplete && result.mode === "continue")
+        if (finish && result.mode === "continue")
           throw new AppError(502, "MODE", "정리 상태를 확인하지 못했어요. 다시 요청해 주세요.");
+        const clarificationNote =
+          plan.assumedReply && result.mode === "continue"
+            ? "기대한 대답이 있었던 것처럼 제가 물었네요."
+            : null;
+        if (clarificationNote) {
+          const question = result.sentences.at(-1) || "";
+          // Keep a scene-specific question when it refers to what happened. If it still
+          // assumes an unexpressed wish, ask about the exchange without assigning a wish.
+          const repeatsAssumption =
+            /바랐|바라|바라는|기대|원했|해주길|해줬으면|해줄\s*것|듣고\s*싶|했으면|말하고\s*싶/.test(
+              question,
+            );
+          result = {
+            ...result,
+            sentences: [repeatsAssumption ? "그 말을 들은 뒤에 대화가 더 이어졌어요?" : question],
+          };
+        }
+        if (
+          plan.briefDisappointment &&
+          result.mode === "continue" &&
+          result.sentences.some((sentence) => /기대하|기대했|기대해|기대가/.test(sentence)) &&
+          !messages.some(
+            (message) =>
+              message.role === "user" &&
+              /기대|기다렸|기다리고|바랐|보고\s*싶/.test(message.content),
+          )
+        ) {
+          result = { ...result, sentences: ["그 일이 조금 마음에 남았군요."] };
+        }
         const reviewStart = performance.now();
         // Review cumulative text and the diary in one request. A subsequent edit or
         // filter changes the cache key, so only the exact reviewed text can be reused.
-        const candidates = result.sentences.map((_, i) =>
-          result.sentences.slice(0, i + 1).join(" "),
-        );
+        const visible = clarificationNote
+          ? [clarificationNote, ...result.sentences]
+          : result.sentences;
+        const candidates = visible.map((_, i) => visible.slice(0, i + 1).join(" "));
         if (result.diaryDraft) candidates.push(result.diaryDraft);
         const [verified, flags] = await Promise.all([
           preserveAttribution(messages, result, async (statements, fields, diaryIndex, verify) => {
@@ -264,18 +352,41 @@ export async function runStreamingChat(
           }),
           ai.moderateOutputs(candidates),
         ]);
-        if (containsInternalOutput(verified))
+        if (unreadableReply(verified) || losesSpeaker(verified))
           throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
-        result = verified;
+        // The acknowledgement describes our previous question, not an actor in the user's story.
+        result = clarificationNote
+          ? { ...verified, sentences: [clarificationNote, ...verified.sentences] }
+          : verified;
         candidates.forEach((text, i) => outputFlags.set(text, flags[i]));
         outputCheckMs += performance.now() - reviewStart;
+        return result;
+      };
+      let result: StreamReply;
+      try {
+        result = await prepareReply();
+      } catch (error) {
+        // A draft that failed validation has not reached the browser.
+        if (
+          suppressed ||
+          !(error instanceof AppError) ||
+          !["FORMAT", "ATTRIBUTION"].includes(error.code)
+        )
+          throw error;
+        await slot.extra();
+        received.length = 0;
+        mode = "continue";
+        result = await prepareReply();
+      }
+      if (!suppressed) {
         for (let sentence of result.sentences) {
           const selected = selectSentences(
             sentence,
             result.mode === "continue" &&
               !plan.listening &&
               questions === 0 &&
-              (!plan.openingQuestion || Boolean(body)),
+              (!plan.openingQuestion || Boolean(body)) &&
+              (!plan.followupQuestion || sentence === result.sentences.at(-1)),
             result.mode === "complete",
           );
           if (!selected.text) continue;
@@ -331,7 +442,13 @@ export async function runStreamingChat(
         );
       if (mode === "complete" && !plan.skipDiary && safety === "normal" && result.diaryDraft) {
         const quote = result.sourceQuote?.trim();
-        if (!quote || !messages.some((m) => m.role === "user" && m.content.includes(quote)))
+        if (
+          !quote ||
+          !messages.some(
+            (m) =>
+              m.role === "user" && m.content.replace(/\s/g, "").includes(quote.replace(/\s/g, "")),
+          )
+        )
           throw new AppError(
             502,
             "DRAFT_SOURCE",
@@ -349,7 +466,9 @@ export async function runStreamingChat(
         : {
             turns: plan.current.turns + (args.action === "summary" ? 0 : 1),
             questions: plan.current.questions + questions,
-            completed: plan.forceComplete && (mode === "complete" || mode === "close"),
+            completed:
+              (plan.forceComplete && (mode === "complete" || mode === "close")) ||
+              Boolean(diaryDraft),
           };
     const surveyReady = progress.completed && safety === "normal";
     if (diaryDraft && safety === "normal") publish("\n\n" + DIARY_INVITATION);

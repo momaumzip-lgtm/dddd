@@ -459,7 +459,11 @@ export default function Chat({ config }: { config: PublicConfig }) {
                 </div>
                 {!history.length && !pending && (
                   <div className="welcome-copy">
-                    <h2>어떤 일이 있었나요?</h2>
+                    <h2>
+                      {emotion && emotion.emotionId !== "unknown"
+                        ? "오늘 언제 그 마음이 들었나요?"
+                        : "오늘 마음에 남은 장면이 있나요?"}
+                    </h2>
                     <p>한 문장만 적어도 괜찮아요. 고른 감정은 이미 전해졌어요.</p>
                   </div>
                 )}

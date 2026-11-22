@@ -51,6 +51,7 @@ function provider(mode = "continue"): {
   return {
     calls,
     ai: {
+      reviewReadiness: async () => ({ wish: "", meaning: "", reaction: "", next: "continue" }),
       checkAttribution: async () => ({ edits: [] }),
       moderateOutputs: async (texts) => texts.map(() => false),
       moderate: async () => ({ flagged: false, categories: {} }),
@@ -864,6 +865,95 @@ test("output-format notes in a valid reply never reach the stream or signed hist
   }
 });
 
+test("internal markers and nonstandard punctuation cannot escape a valid reply field", async () => {
+  const p = provider();
+  const visible: string[] = [];
+  let calls = 0;
+  p.ai.streamReply = async (_messages, _context, emit) => {
+    calls++;
+    const artifacts = [
+      "어떤 장면이 마음에 남았나요⁇‌⁆⁇‌⁆ 까요?",
+      "이 일에서 오래 기억하고 싶은 순간은 어떤 장면인가요↵:VEVENT]  vvvvv 까요?",
+    ];
+    const sentences = ["친구가 다시 읽어 달라고 해서 반가우셨겠어요.", artifacts[calls - 1]];
+    for (const sentence of sentences) await emit(sentence, { mode: "continue", safety: "normal" });
+    return { mode: "continue", safety: "normal", sentences };
+  };
+  await assert.rejects(
+    runStreamingChat(args(), new Gate(new LuaStore(), cap), p.ai, (text) => visible.push(text)),
+    /입력은 그대로/,
+  );
+  assert.deepEqual(visible, []);
+  assert.equal(calls, 2);
+});
+test("a rejected attribution repair retries before showing any reply", async () => {
+  const p = provider();
+  let reviews = 0;
+  p.ai.checkAttribution = async () => ({
+    edits:
+      ++reviews === 1
+        ? [{ field: 0, before: "틀린 위치", after: "직접", evidence: "제가 고른" }]
+        : [],
+  });
+  const visible: string[] = [];
+  await runStreamingChat(
+    { ...args(), message: "제가 고른 그림책을 아이가 다시 읽어 달라고 했어요." },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    (text) => visible.push(text),
+  );
+  assert.equal(reviews, 2);
+  assert.equal(p.calls.length, 2);
+  assert.equal(visible.length, 2);
+});
+test("a positive opening keeps the speaker's action out of the chatbot's first person", async () => {
+  const p = provider();
+  let calls = 0;
+  const visible: string[] = [];
+  p.ai.streamReply = async (_messages, _context, emit) => {
+    const sentences = [
+      ++calls === 1 ? "제가 혼자 만드신 가방이군요." : "혼자 만드신 가방을 언니가 들고 가셨군요.",
+      "어떤 점이 특히 반가웠어요?",
+    ];
+    for (const sentence of sentences) await emit(sentence, { mode: "continue", safety: "normal" });
+    return { mode: "continue", safety: "normal", sentences };
+  };
+  const selected = { ...emotion, emotionId: "pos-014" };
+  await runStreamingChat(
+    { ...args(), emotion: selected, message: "제가 만든 가방을 언니가 들고 갔어요." },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    (text) => visible.push(text),
+  );
+  assert.equal(calls, 2);
+  assert.doesNotMatch(visible.join(""), /제가/);
+});
+test("a followup exposes only the dedicated question when a draft repeats it with a period", async () => {
+  const p = provider();
+  p.ai.streamReply = async (_messages, _context, emit) => {
+    const sentences = [
+      "어떤 사진을 먼저 보여주고 싶으세요.",
+      "어떤 사진을 먼저 보여주고 싶으세요?",
+    ];
+    for (const sentence of sentences) await emit(sentence, { mode: "continue", safety: "normal" });
+    return { mode: "continue", safety: "normal", sentences };
+  };
+  const turn = await runStreamingChat(
+    {
+      ...args(),
+      message: "사진을 먼저 보여주고 싶어요.",
+      history: [
+        { role: "user", content: "아무도 전시에 못 왔어요." },
+        { role: "assistant", content: "어떤 일이 마음에 남았나요?" },
+      ],
+      progress: { ...freshProgress, turns: 1, questions: 1 },
+    },
+    new Gate(new LuaStore(), cap),
+    p.ai,
+    () => {},
+  );
+  assert.equal(turn.body, "어떤 사진을 먼저 보여주고 싶으세요?");
+});
 test("a later request to write can follow listening or a declined diary", () => {
   const history = [{ role: "user", content: "지금은 기록하고 싶지 않고 그냥 들어줘." }];
   assert.equal(responsePlan(freshProgress, "chat", "응", history).skipDiary, true);
@@ -1161,6 +1251,108 @@ test("ordinary replies keep the conversation open through a wish, an insight and
   assert.equal(finish.surveyReady, true);
 });
 
+test("asking what our question means rephrases it without starting a diary", () => {
+  const history = [
+    { role: "user", content: "집에 온 뒤 친구가 불편했다고 했어요." },
+    { role: "assistant", content: "친구에게 어떤 반응을 바랐나요?" },
+  ];
+  const progress = { ...freshProgress, turns: 4, questions: 4 };
+  for (const message of [
+    "무슨 반응?",
+    "어떤 반응을 말하는 거예요",
+    "그게 무슨 뜻이에요?",
+    "다시 물어봐 주세요",
+    "그날 나는 몰랐다고 답했어. 근데 무슨 반응이냐는 말은 무슨 뜻이야?",
+  ]) {
+    const plan = responsePlan(progress, "chat", message, history);
+    assert.equal(plan.clarifyQuestion, true, message);
+    assert.equal(plan.followupQuestion, true);
+    assert.equal(plan.mayReflect, false);
+  }
+  for (const message of [
+    "무슨 반응인지 친구한테 물어봤어요.",
+    "어떻게 반응해야 돼?",
+    "무슨 뜻인지 이제 알겠어요.",
+  ]) {
+    assert.equal(responsePlan(progress, "chat", message, history).clarifyQuestion, false);
+  }
+  assert.equal(responsePlan(freshProgress, "chat", "무슨 반응?", []).clarifyQuestion, false);
+});
+test("clarifying an expectation introduced by the assistant does not ask for the same wish again", async () => {
+  const history = [
+    { role: "user" as const, content: "친구가 집에 온 뒤에 불편했다고 했어요." },
+    { role: "assistant" as const, content: "친구에게 어떤 반응을 기대했나요?" },
+  ];
+  const { ai } = provider();
+  ai.reviewReadiness = async () => assert.fail("clarification must not start a diary review");
+  ai.streamReply = async (_messages, _context, emit) => {
+    const sentences = ["제가 어렵게 물었네요.", "친구가 무슨 말을 해주길 바랐나요?"];
+    for (const s of sentences) await emit(s, { mode: "continue", safety: "normal" });
+    return { mode: "continue", safety: "normal", sentences };
+  };
+  const response = await runStreamingChat(
+    { ...args(), history, message: "무슨 반응?", progress: { ...freshProgress, turns: 3 } },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.match(response.body, /대화가 더 이어졌어요\?/);
+  assert.equal(response.progress.completed, false);
+  assert.equal(response.diaryDraft, null);
+  assert.equal(
+    responsePlan(freshProgress, "chat", "무슨 반응?", [
+      { role: "user", content: "저는 사과를 바랐어요." },
+      history[1],
+    ]).assumedReply,
+    false,
+  );
+});
+test("natural diary needs user evidence for the wish, its meaning and the response", async () => {
+  const history = [
+    { role: "user" as const, content: "끝까지 들어줬으면 했어." },
+    { role: "assistant" as const, content: "말을 끊으면 어떤 기분이 들었어요?" },
+    { role: "user" as const, content: "무시당한 기분이 드니까." },
+    { role: "assistant" as const, content: "그럴 때는 말을 이어가나요?" },
+  ];
+  for (const grounded of [false, true]) {
+    const { ai } = provider();
+    const reaction = grounded ? "멈추게 돼" : "소리를 질러";
+    ai.reviewReadiness = async () => ({
+      wish: "끝까지 들어줬으면",
+      meaning: "무시당한 기분",
+      reaction,
+      next: "diary",
+    });
+    const ordinary = ai.streamReply;
+    ai.streamReply = async (messages, context, emit) => {
+      if (!context.forceComplete) return ordinary(messages, context, emit);
+      const sentence = "말을 끊기면 무시당한 기분에 멈추게 되시는군요.";
+      await emit(sentence, { mode: "complete", safety: "normal" });
+      return {
+        mode: "complete",
+        safety: "normal",
+        sentences: [sentence],
+        sourceQuote: "멈추게 돼",
+        diaryDraft:
+          "말이 끊기면 무시당한 느낌에 멈추게 되고, 내 말을 끝까지 들어주는 게 중요하구나.",
+      };
+    };
+    const reply = await runStreamingChat(
+      {
+        ...args(),
+        history,
+        message: "멈추게 돼",
+        progress: { ...freshProgress, turns: 2, questions: 2 },
+      },
+      new Gate(new LuaStore(), cap),
+      ai,
+      () => {},
+    );
+    assert.equal(reply.progress.completed, grounded);
+    assert.equal(reply.surveyReady, grounded);
+    assert.equal(Boolean(reply.diaryDraft), grounded);
+  }
+});
 test("immediate endings and ordinary reluctance are separate intentions", () => {
   for (const value of [
     "바로 끝내줘",
