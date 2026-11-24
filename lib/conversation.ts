@@ -74,7 +74,7 @@ function asksAboutQuestion(text: string) {
   const words = lastClause.replace(/\s+/g, "").replace(/^(?:근데|그런데|그럼)/, "");
   const referent = words.replace(/^(?:그게|그건|그거|방금질문은|그질문은|여기서)/, "");
   if (
-    /(?:이냐는말은|이라는말은|라는말은|라는질문은)무슨뜻(?:이야|이에요|인가요|이죠)?$/.test(
+    /(?:이냐는말은|이라는말은|라는말은|라는질문은|냐는게|냐는건)무슨뜻(?:이야|이에요|인가요|이죠)?$/.test(
       referent,
     )
   )

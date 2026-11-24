@@ -483,6 +483,10 @@ for (const invalid of ["unsupported quote", "wrong speaker"] as const)
     p.ai.streamReply = async (_messages, context, publish) => {
       assert.equal(context.manualSummary, true);
       const first = ++attempts === 1;
+      assert.equal(
+        context.repairSummarySpeaker,
+        !first && invalid === "wrong speaker" ? true : undefined,
+      );
       const result = {
         mode: "complete" as const,
         safety: "normal" as const,
@@ -520,6 +524,48 @@ for (const invalid of ["unsupported quote", "wrong speaker"] as const)
     assert.doesNotMatch(emitted, /처음 정리한 문장|제가 준비한/);
     assert.ok(result.diaryDraft);
     assert.equal(result.surveyReady, true);
+  });
+for (const repeatedSpeakerError of [false, true])
+  test(`a typed correction keeps the diary when the summary ${repeatedSpeakerError ? "still needs a fallback" : "is repaired"}`, async () => {
+    const { ai } = provider();
+    let attempts = 0;
+    const draft = "모임 사진은 내가 찍었고, 동생이 이메일로 보냈다.";
+    ai.streamReply = async (_messages, context, emit) => {
+      const first = ++attempts === 1;
+      assert.equal(context.recordCorrection, true);
+      assert.equal(context.repairSummarySpeaker, first ? undefined : true);
+      const sentence =
+        first || repeatedSpeakerError
+          ? "제가 모임 사진을 찍었고, 동생이 그 사진을 이메일로 보냈군요."
+          : "제가 앞서 잘못 이해했어요. 사진은 직접 찍으셨고, 동생이 이메일로 보냈군요.";
+      const header = { mode: "complete" as const, safety: "normal" as const };
+      await emit(sentence, header);
+      return {
+        ...header,
+        sentences: [sentence],
+        sourceQuote: "다이어리에 적어 주세요.",
+        diaryDraft: draft,
+      };
+    };
+    const result = await runStreamingChat(
+      {
+        ...args(),
+        history: [
+          { role: "user", content: "동생이 모임 사진을 찍었어요." },
+          { role: "assistant", content: "동생이 사진을 찍었군요." },
+        ],
+        progress: { ...freshProgress, turns: 1, questions: 1 },
+        message:
+          "반대로 말했어요. 사진은 제가 찍었고 동생이 이메일로 보냈어요. 다이어리에 적어 주세요.",
+      },
+      new Gate(new LuaStore(), cap),
+      ai,
+      () => {},
+    );
+    assert.equal(attempts, 2);
+    assert.equal(result.diaryDraft, draft);
+    assert.doesNotMatch(result.body, /제가 모임 사진을 찍었고/);
+    if (repeatedSpeakerError) assert.match(result.body, /말씀하신 내용으로 한 줄을 정리했어요/);
   });
 test("conversation omits disguised extra questions and regenerates a premature diary", async () => {
   const p = provider();
@@ -1030,7 +1076,7 @@ test("a followup exposes only the dedicated question when a draft repeats it wit
   const p = provider();
   p.ai.streamReply = async (_messages, _context, emit) => {
     const sentences = [
-      "전시 사진을 한 번 보여주고 싶으셨군요. 어떤 사진을 먼저 보여주고 싶으세요. 좋았던 게 뭐였어요요. 전시 사진을 한 번 보여주고 싶으셨군요。",
+      "전시 사진을 한 번 보여주고 싶으셨군요. 어떤 사진을 먼저 보여주고 싶으세요. 좋았던 게 뭐였어요요. 어떤 점에서 중요해요. 전시 사진을 한 번 보여주고 싶으셨군요。",
       "어떤 사진을 먼저 보여주고 싶으세요?",
     ];
     for (const sentence of sentences) await emit(sentence, { mode: "continue", safety: "normal" });
@@ -1370,6 +1416,7 @@ test("asking what our question means rephrases it without starting a diary", () 
     "그게 무슨 뜻이에요?",
     "다시 물어봐 주세요",
     "그날 나는 몰랐다고 답했어. 근데 무슨 반응이냐는 말은 무슨 뜻이야?",
+    "무슨 대답을 기대했냐는 게 무슨 뜻이에요?",
   ]) {
     const plan = responsePlan(progress, "chat", message, history);
     assert.equal(plan.clarifyQuestion, true, message);
@@ -1640,17 +1687,17 @@ test("a typed diary request uses previously confirmed meaning and removes only t
     return {
       wish: "사과했으면",
       meaning: "",
-      confirmedMeaning: "서운한 일을 편하게 꺼낼 수 있다는 안심",
+      confirmedMeaning: "",
       reaction: "",
       insight: "",
-      next: "diary",
+      next: "meaning",
     };
   };
   const discovery =
     "사과를 바랐던 건 서운한 일을 편하게 말할 수 있다는 안심이 필요했기 때문이구나.";
   ai.streamReply = async (_messages, context, emit) => {
     assert.equal(context.forceComplete, true);
-    assert.equal(context.diaryEvidence?.confirmedMeaning, "서운한 일을 편하게 꺼낼 수 있다는 안심");
+    assert.equal(context.diaryEvidence?.confirmedMeaning, history[1].content);
     const sentence = "친구의 사과를 바라셨군요.";
     await emit(sentence, { mode: "complete", safety: "normal" });
     return {
@@ -1688,6 +1735,7 @@ test("a proposed meaning does not become a diary entry after rejection or uncert
   for (const message of [
     "아니요. 그 뜻은 아니에요.",
     "응, 그렇진 않아요.",
+    "네, 그런 뜻은 아니었어요.",
     "재밌었을 것 같아요.",
   ]) {
     const { ai } = provider();
@@ -1719,6 +1767,35 @@ test("a proposed meaning does not become a diary entry after rejection or uncert
     assert.equal(result.diaryDraft, null);
     assert.equal(result.surveyReady, false);
   }
+});
+test("a short feeling does not invite an extra answer when the model omits the question mark", async () => {
+  const { ai } = provider();
+  ai.streamReply = async (_messages, context, emit) => {
+    assert.equal(context.listening, true);
+    const header = { mode: "continue" as const, safety: "normal" as const };
+    const sentences = [
+      "약속이 취소돼서 조금 서운하셨군요.",
+      "그때 친구에게 어떤 말이나 행동을 바랐어요",
+    ];
+    for (const sentence of sentences) await emit(sentence, header);
+    return { ...header, sentences };
+  };
+  const result = await runStreamingChat(
+    {
+      ...args(),
+      history: [
+        { role: "user", content: "친구와의 약속이 취소됐어요." },
+        { role: "assistant", content: "어떤 점이 마음에 남았어요?" },
+      ],
+      progress: { ...freshProgress, turns: 1, questions: 1 },
+      message: "그냥 좀 서운했어요.",
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(result.body, "약속이 취소돼서 조금 서운하셨군요.");
+  assert.equal(result.progress.questions, 1);
 });
 test("immediate endings and ordinary reluctance are separate intentions", () => {
   for (const value of [

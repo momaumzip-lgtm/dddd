@@ -54,6 +54,8 @@ export type StreamContext = {
   reflectionStep?: Readiness["next"];
   diaryEvidence?: Pick<Readiness, "wish" | "meaning" | "confirmedMeaning" | "reaction" | "insight">;
   diaryFeedback?: "surface" | "unsupported";
+  repairSummarySpeaker?: boolean;
+  rejectedMeaning?: boolean;
   turn: number;
   previousSafety: Safety;
 };
@@ -96,14 +98,15 @@ function unreadableReply(reply: StreamReply) {
   );
 }
 const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
+const rejectsProposedMeaning =
+  /그(?:런)?\s*(?:뜻|의미|느낌|해석)(?:이|은|는)?\s*아니|그렇(?:지\s*않|진\s*않)|그(?:보다는|것보다는)/;
 function affirmsMeaning(text: string) {
   return (
     /^(?:응|네|맞아(?:요)?|맞습니다|맞네요|그게 맞아요|그렇(?:죠|습니다|네요)|그런 것 같아요|그게 중요했어요)(?:[\s.,!?。！？]|$)/.test(
       text.trim(),
     ) &&
-    !/아니(?:에요|예요|요)|(?:그런|그|그게|그건)\s*(?:뜻이?\s*)?(?:아니|아닌)|그렇지\s*않|그렇진|그것보다는|그보다는|맞긴|틀렸/.test(
-      text,
-    )
+    !rejectsProposedMeaning.test(text) &&
+    !/아니(?:에요|예요|요)|(?:그런|그|그게|그건)\s*(?:뜻이?\s*)?(?:아니|아닌)|맞긴|틀렸/.test(text)
   );
 }
 function selectSentences(
@@ -131,7 +134,7 @@ function selectSentences(
       /(?:느낀|마음에 남은|떠오른|기억나는|힘들었던).{0,18}(?:순간|때|생각|일|말|것)(?:이|은)?\s*있었어요[.。]+$/.test(
         sentence,
       ) ||
-      /(?:어떻게|뭐|무슨|어떤).*(?:했어요|받았어요|들었어요|이?었어요|였어요|있었어요|싶었어요)요?[.。]+$/.test(
+      /(?:어떻게|뭐|무슨|어떤|어느|무엇).*(?:했어요|받았어요|들었어요|이?었어요|였어요|있었어요|싶었어요|바랐어요|원했어요|중요해요)요?[.。]*$/.test(
         sentence,
       ) ||
       /까요[,，]\s*아니면/.test(sentence) ||
@@ -268,6 +271,7 @@ export async function runStreamingChat(
       let reflectionStep: Readiness["next"] | undefined;
       let diaryEvidence: StreamContext["diaryEvidence"];
       let diaryFeedback: StreamContext["diaryFeedback"];
+      let repairSummarySpeaker = false;
       const segment = recordInput.slice(-(plan.current.turns * 2 + 1));
       const lastUserIndex = segment.findLastIndex((message) => message.role === "user");
       const lastUser = segment[lastUserIndex];
@@ -280,6 +284,8 @@ export async function runStreamingChat(
         lastUser?.role === "user" &&
         /[?？]$/.test(lastQuestion) &&
         affirmsMeaning(lastUser.content);
+      const rejectedMeaning =
+        /[?？]$/.test(lastQuestion) && rejectsProposedMeaning.test(args.message);
       const reviewWorkIntroduction =
         plan.workReflection &&
         plan.followupQuestion &&
@@ -315,12 +321,21 @@ export async function runStreamingChat(
           grounded(meaning) &&
           (!grounded(wish) || (!wish.includes(meaning) && !meaning.includes(wish)));
         const proposed = review.confirmedMeaning.trim();
-        const confirmedMeaning =
-          confirmedReply &&
-          proposed.length >= 7 &&
-          lastQuestion.replace(/\s+/g, "").includes(proposed.replace(/\s+/g, ""))
-            ? proposed
-            : "";
+        let confirmedMeaning = "";
+        if (confirmedReply && !/아니면|둘\s*중|어느\s*쪽/.test(lastQuestion)) {
+          if (
+            proposed.length >= 7 &&
+            lastQuestion.replace(/\s+/g, "").includes(proposed.replace(/\s+/g, ""))
+          )
+            confirmedMeaning = proposed;
+          else if (
+            lastQuestion.length <= 200 &&
+            /안심이\s*(?:들었을까요|들었겠어요|필요했을까요|필요했던\s*걸까요)[?？]$/.test(
+              lastQuestion,
+            )
+          )
+            confirmedMeaning = lastQuestion;
+        }
         const hasReaction =
           grounded(reaction) &&
           reaction !== wish &&
@@ -364,7 +379,7 @@ export async function runStreamingChat(
           !hasInsight &&
           !hasMeaning &&
           !confirmedMeaning &&
-          /면.{0,26}(?:걸까\s*봐|될까\s*봐|(?:것|거)\s*같)|일까\s*봐/.test(latest) &&
+          /면.{0,36}(?:걸까\s*봐|될까\s*봐|(?:것|거)\s*같|라고\s*생각)|일까\s*봐/.test(latest) &&
           !/실제로|직접.{0,14}(?:말|들)|아무도|분명히.{0,10}했/.test(latest)
         )
           reflectionStep = "fact";
@@ -395,12 +410,15 @@ export async function runStreamingChat(
         ((reply.mode === "continue" &&
           plan.openingQuestion &&
           emotionContext.category === "positive") ||
-          (recordRequested &&
-            !plan.recordCorrection &&
-            (reply.mode === "complete" || reply.mode === "close"))) &&
+          (recordRequested && (reply.mode === "complete" || reply.mode === "close"))) &&
         reply.sentences.some((sentence) =>
           /(?:^|[^가-힣])(?:제가|내가|저는|나는|제|내)\s/.test(
-            sentence.replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'/g, ""),
+            sentence
+              .replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'/g, "")
+              .replace(
+                /(?:^|(?<=[.。]\s))제가\s+(?:(?:앞서|아까|방금)\s+[^?？.。]{0,45}?)?잘못\s*(?:이해했어요|짚었어요|말했어요|이해했습니다)[.。]/g,
+                "",
+              ),
           ),
         );
       const generate = () =>
@@ -412,6 +430,8 @@ export async function runStreamingChat(
             reflectionStep,
             diaryEvidence,
             diaryFeedback,
+            ...(repairSummarySpeaker ? { repairSummarySpeaker: true } : {}),
+            ...(rejectedMeaning ? { rejectedMeaning: true } : {}),
             listening: plan.listening,
             skipDiary: plan.skipDiary,
             followupQuestion: plan.followupQuestion,
@@ -448,12 +468,12 @@ export async function runStreamingChat(
             modelFirstTextMs = performance.now() - started;
           },
         );
-      const prepareReply = async () => {
+      const prepareReply = async (retrying = false) => {
         const generationStarted = performance.now();
         let result = await generate();
         generationMs += performance.now() - generationStarted;
         if (suppressed) return result;
-        if (unreadableReply(result) || losesSpeaker(result))
+        if (unreadableReply(result) || (result.mode === "continue" && losesSpeaker(result)))
           throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
         if (
           mode !== result.mode ||
@@ -559,6 +579,7 @@ export async function runStreamingChat(
               diaryEvidence?.reaction,
               diaryEvidence?.wish,
               diaryEvidence?.confirmedMeaning ? lastUser?.content : null,
+              plan.recordCorrection ? plan.recordStory : null,
             ];
             const hasSource = quotes.some((quote) => {
               const words = quote?.replace(/\s/g, "");
@@ -573,6 +594,18 @@ export async function runStreamingChat(
           }
         }
         const question = result.sentences.at(-1) ?? "";
+        if (
+          rejectedMeaning &&
+          result.mode === "continue" &&
+          /(?:그렇게\s*제안한|그\s*(?:뜻|해석|마음|의미)|방금.{0,7}(?:해석|제안)).{0,28}(?:맞나요|맞을까요|있었을까요)/.test(
+            question,
+          )
+        )
+          throw new AppError(
+            502,
+            "QUESTION",
+            "이어서 나눌 질문을 확인하지 못했어요. 다시 요청해 주세요.",
+          );
         if (
           reflectionStep === "meaning" &&
           result.mode === "continue" &&
@@ -624,9 +657,19 @@ export async function runStreamingChat(
             ? slot.extra().then(() => ai.reviewDiary(segment, evidence, draft))
             : ("grounded" as const),
         ]);
-        const verified = evidence ? { ...attributed, diaryDraft: draft } : attributed;
-        if (unreadableReply(verified) || losesSpeaker(verified))
+        let verified = evidence ? { ...attributed, diaryDraft: draft } : attributed;
+        const speakerChanged = losesSpeaker(verified);
+        if (unreadableReply(verified))
           throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
+        if (speakerChanged) {
+          if (retrying && verified.mode === "complete" && verified.diaryDraft) {
+            // The diary is checked separately. A faulty summary must not discard a valid record.
+            verified = { ...verified, sentences: ["말씀하신 내용으로 한 줄을 정리했어요."] };
+          } else {
+            repairSummarySpeaker = recordRequested;
+            throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
+          }
+        }
         if (verdict !== "grounded") {
           diaryFeedback = verdict;
           throw new AppError(
@@ -659,7 +702,7 @@ export async function runStreamingChat(
         await slot.extra();
         received.length = 0;
         mode = "continue";
-        result = await prepareReply();
+        result = await prepareReply(true);
       }
       if (
         result.mode === "complete" &&
