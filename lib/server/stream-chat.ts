@@ -56,6 +56,7 @@ export type StreamContext = {
   diaryFeedback?: "surface" | "unsupported";
   repairSummarySpeaker?: boolean;
   rejectedMeaning?: boolean;
+  retryConversation?: boolean;
   turn: number;
   previousSafety: Safety;
 };
@@ -421,7 +422,7 @@ export async function runStreamingChat(
               ),
           ),
         );
-      const generate = () =>
+      const generate = (retrying: boolean) =>
         ai.streamReply(
           messages,
           {
@@ -432,6 +433,7 @@ export async function runStreamingChat(
             diaryFeedback,
             ...(repairSummarySpeaker ? { repairSummarySpeaker: true } : {}),
             ...(rejectedMeaning ? { rejectedMeaning: true } : {}),
+            ...(retrying && !finish && plan.followupQuestion ? { retryConversation: true } : {}),
             listening: plan.listening,
             skipDiary: plan.skipDiary,
             followupQuestion: plan.followupQuestion,
@@ -470,7 +472,7 @@ export async function runStreamingChat(
         );
       const prepareReply = async (retrying = false) => {
         const generationStarted = performance.now();
-        let result = await generate();
+        let result = await generate(retrying);
         generationMs += performance.now() - generationStarted;
         if (suppressed) return result;
         if (unreadableReply(result) || (result.mode === "continue" && losesSpeaker(result)))
@@ -509,12 +511,18 @@ export async function runStreamingChat(
               sentence,
             ),
           )
-        )
-          throw new AppError(
-            502,
-            "QUESTION",
-            "대화를 이어갈 답변을 받지 못했어요. 다시 요청해 주세요.",
-          );
+        ) {
+          if (!retrying || plan.openingQuestion || plan.clarifyQuestion)
+            throw new AppError(
+              502,
+              "QUESTION",
+              "대화를 이어갈 답변을 받지 못했어요. 다시 요청해 주세요.",
+            );
+          result = {
+            ...result,
+            sentences: ["더 이야기하고 싶은 부분이 있으면 편한 만큼 이어서 말씀하셔도 괜찮아요."],
+          };
+        }
         const clarificationNote =
           plan.assumedReply && result.mode === "continue"
             ? "기대한 대답이 있었던 것처럼 제가 물었네요."

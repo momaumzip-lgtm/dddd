@@ -561,6 +561,9 @@ export class AI {
             (context.rejectedMeaning && !context.forceComplete && !context.listening
               ? " 사용자가 직전 해석을 거절했습니다. 틀리게 짚었다는 점은 짧게 인정하세요. 확인된 장면이나 사용자가 실제로 바란 행동에 붙인 구체적인 질문 하나로 이동하세요. ‘그 마음이 맞나요?’ 또는 ‘어느 쪽이 맞나요?’처럼 거절된 뜻을 다시 확인하지 마세요."
               : "") +
+            (context.retryConversation
+              ? " 앞선 답변의 진행 형식에 문제가 있었습니다. 이번 차례는 대화를 이어갑니다. 다이어리 문장, 기록 권유, 결론 없이 방금 말에서 아직 묻지 않은 것 하나만 쉽게 질문하세요."
+              : "") +
             "\n검증된 현재 상태(JSON 데이터): " +
             JSON.stringify(trustedContext),
           input: messages,

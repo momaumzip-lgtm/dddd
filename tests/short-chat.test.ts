@@ -589,6 +589,36 @@ test("conversation omits disguised extra questions and regenerates a premature d
   assert.equal(result.body, "친구에게 어떤 말을 이어서 하고 싶었어요?");
   assert.equal(result.surveyReady, false);
 });
+test("a repeated premature diary does not break an ordinary followup", async () => {
+  const { ai } = provider();
+  let attempts = 0;
+  ai.streamReply = async (_messages, context, emit) => {
+    assert.equal(context.forceComplete, false);
+    assert.equal(context.retryConversation, ++attempts === 2 ? true : undefined);
+    const sentence = "오늘 다이어리에는 ‘준비한 마음을 존중받고 싶었구나’라고 남겨볼까요?";
+    const header = { mode: "continue" as const, safety: "normal" as const };
+    await emit(sentence, header);
+    return { ...header, sentences: [sentence] };
+  };
+  const result = await runStreamingChat(
+    {
+      ...args(),
+      history: [
+        { role: "user", content: "친구가 축사를 부탁한 기억이 없대요." },
+        { role: "assistant", content: "그때 어떤 말이 듣고 싶었어요?" },
+      ],
+      progress: { ...freshProgress, turns: 1, questions: 1 },
+      message: "친구를 위해 들인 시간과 진심을 가볍게 여기지 않는 게 중요했어요.",
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.equal(result.progress.completed, false);
+  assert.equal(result.diaryDraft, null);
+  assert.doesNotMatch(result.body, /다이어리|존중받고 싶었구나/);
+});
 test("an action the user wants to take is not presented as decided", async () => {
   const p = provider();
   let attempts = 0;
