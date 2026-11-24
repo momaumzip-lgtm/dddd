@@ -37,30 +37,30 @@ function onlyExpressesUncertainty(text: string) {
   );
 }
 
-function requestsDiaryNow(text: string) {
-  const clause = text
-    .trim()
-    .replace(/[.!?。！？\s]+$/, "")
+function storyBeforeDiaryRequest(text: string) {
+  const trimmed = text.trim().replace(/[.!?。！？\s]+$/, "");
+  const clause = trimmed
     .split(/[.!?。！？,，\n]/)
     .at(-1)
     ?.trim();
-  if (!clause || /나중에|다음번에|다음에|내일|이따가/.test(clause)) return false;
+  if (!clause || /나중에|다음번에|다음에|내일|이따가/.test(clause)) return null;
   const asksForDraft =
-    /(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:정리해|남겨|해|써|만들어)\s*(?:줘|주세요|줄래요)$/.test(
+    /(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:한\s*(?:줄|문장)(?:으로|로)?\s*)?(?:정리해|남겨|적어|해|써|만들어)\s*(?:줘|주세요|줄래요)$/.exec(
       clause,
     );
   const asksForLine =
-    /(?:한\s*(?:줄|문장)(?:으로|로)?|이\s*마음을?|그걸|이걸|지금|바로)\s*적어\s*(?:줘|주세요|줄래요)$/.test(
+    /(?:한\s*(?:줄|문장)(?:으로|로)?|이\s*마음을?|그걸|이걸|지금|바로)\s*적어\s*(?:줘|주세요|줄래요)$/.exec(
       clause,
     );
   // First-person wishes are ambiguous unless they refer to this chat or its written result.
   const wantsDraftHere =
-    /^(?:(?:이제는?|지금은?|바로|여기서|이걸|그걸|이 마음을|오늘 대화를)\s*)+(?:한\s*(?:줄|문장)(?:으로|로)?\s*)?(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:남기고|하고|쓰고|적고)\s*싶(?:어|어요|습니다)$/.test(
+    /^(?:(?:이제는?|지금은?|바로|여기서|이걸|그걸|이 마음을|오늘 대화를)\s*)+(?:한\s*(?:줄|문장)(?:으로|로)?\s*)?(?:기록|일기|초안|다이어리)(?:으로|에|을|를)?\s*(?:남기고|하고|쓰고|적고)\s*싶(?:어|어요|습니다)$/.exec(
       clause,
     );
   const wantsOneLine =
-    /^한\s*(?:줄|문장)(?:으로|로)?\s*(?:기록하고|적고|남기고)\s*싶(?:어|어요|습니다)$/.test(clause);
-  return asksForDraft || asksForLine || wantsDraftHere || wantsOneLine;
+    /^한\s*(?:줄|문장)(?:으로|로)?\s*(?:기록하고|적고|남기고)\s*싶(?:어|어요|습니다)$/.exec(clause);
+  const request = asksForDraft ?? asksForLine ?? wantsDraftHere ?? wantsOneLine;
+  return request ? trimmed.slice(0, trimmed.length - clause.length + request.index).trim() : null;
 }
 
 // A short question can refer to our last prompt, rather than describe a new event.
@@ -127,8 +127,8 @@ export function responsePlan(
       listening = false;
     }
   }
-  const forceComplete =
-    action === "summary" || wantsFinish(latest) || (!skipDiary && requestsDiaryNow(latest));
+  const recordStory = skipDiary ? null : storyBeforeDiaryRequest(latest);
+  const forceComplete = action === "summary" || wantsFinish(latest) || recordStory !== null;
   // A direct request for wording calls for an answer. An ordinary account, even a detailed one, opens exploration.
   const asksForWording =
     /(?:문자|메시지|답장|표현|문구).{0,35}(?:써\s*(?:줘|주세요)|쓰면|작성해|추천해)|어떻게\s*(?:말하면|전하면|답하면|쓰면)/.test(
@@ -205,6 +205,7 @@ export function responsePlan(
   return {
     current,
     forceComplete,
+    recordStory,
     recordCorrection:
       forceComplete &&
       /반대로|정정|잘못\s*(?:말|썼|적)|바꿔\s*말|고쳐\s*(?:써|줘|주세요)/.test(latest),

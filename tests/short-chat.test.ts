@@ -1624,6 +1624,66 @@ test("an affirmed deeper meaning is recorded and a surface-only draft is regener
   assert.equal(result.diaryDraft, discovery);
   assert.equal(result.surveyReady, true);
 });
+test("a typed diary request uses previously confirmed meaning and removes only the request", async () => {
+  const history = [
+    { role: "user" as const, content: "친구가 사과했으면 했어요." },
+    {
+      role: "assistant" as const,
+      content: "사과를 들으면 서운한 일을 편하게 꺼낼 수 있다는 안심이 들었을까요?",
+    },
+    { role: "user" as const, content: "네. 그게 맞아요. 아직 조금 더 말하고 싶어요." },
+    { role: "assistant" as const, content: "더 이야기하셔도 괜찮아요." },
+  ];
+  const { ai } = provider();
+  ai.reviewReadiness = async (input) => {
+    assert.deepEqual(input, history);
+    return {
+      wish: "사과했으면",
+      meaning: "",
+      confirmedMeaning: "서운한 일을 편하게 꺼낼 수 있다는 안심",
+      reaction: "",
+      insight: "",
+      next: "diary",
+    };
+  };
+  const discovery =
+    "사과를 바랐던 건 서운한 일을 편하게 말할 수 있다는 안심이 필요했기 때문이구나.";
+  ai.streamReply = async (_messages, context, emit) => {
+    assert.equal(context.forceComplete, true);
+    assert.equal(context.diaryEvidence?.confirmedMeaning, "서운한 일을 편하게 꺼낼 수 있다는 안심");
+    const sentence = "친구의 사과를 바라셨군요.";
+    await emit(sentence, { mode: "complete", safety: "normal" });
+    return {
+      mode: "complete",
+      safety: "normal",
+      sentences: [sentence],
+      sourceQuote: "사과했으면",
+      diaryDraft: discovery,
+    };
+  };
+  const progress = { ...freshProgress, turns: 2, questions: 1 };
+  assert.equal(
+    responsePlan(
+      progress,
+      "chat",
+      "그 마음을 편하게 말하고 싶었어요. 다이어리에 한 줄로 적어줘.",
+      history,
+    ).recordStory,
+    "그 마음을 편하게 말하고 싶었어요.",
+  );
+  assert.equal(
+    responsePlan(progress, "chat", "내일 다이어리 한 줄로 써 주세요.", history).recordStory,
+    null,
+  );
+  const result = await runStreamingChat(
+    { ...args(), history, message: "다이어리 한 줄로 써 주세요.", progress },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(result.diaryDraft, discovery);
+  assert.equal(result.surveyReady, true);
+});
 test("a proposed meaning does not become a diary entry after rejection or uncertainty", async () => {
   for (const message of [
     "아니요. 그 뜻은 아니에요.",

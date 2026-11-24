@@ -194,7 +194,16 @@ export async function runStreamingChat(
   const emotion = correctedSelection(args.emotion, args.message),
     plan = responsePlan(args.progress, args.action, args.message, args.history);
   const messages: Message[] = [...args.history, { role: "user", content: args.message }];
-  const userStory = (args.action === "summary" ? args.history : messages)
+  const recordRequested = args.action === "summary" || plan.recordStory !== null;
+  const recordInput: Message[] =
+    args.action === "summary"
+      ? args.history
+      : plan.recordStory === null
+        ? messages
+        : plan.recordStory
+          ? [...args.history, { role: "user", content: plan.recordStory }]
+          : args.history;
+  const userStory = recordInput
     .filter((message) => message.role === "user")
     .map((message) => message.content.replace(/\s/g, ""));
   let safety = retainRisk(args.safety, urgent(args.message)),
@@ -259,9 +268,7 @@ export async function runStreamingChat(
       let reflectionStep: Readiness["next"] | undefined;
       let diaryEvidence: StreamContext["diaryEvidence"];
       let diaryFeedback: StreamContext["diaryFeedback"];
-      const segment = (args.action === "summary" ? args.history : messages).slice(
-        -(plan.current.turns * 2 + 1),
-      );
+      const segment = recordInput.slice(-(plan.current.turns * 2 + 1));
       const lastUserIndex = segment.findLastIndex((message) => message.role === "user");
       const lastUser = segment[lastUserIndex];
       const preceding = segment[lastUserIndex - 1];
@@ -279,15 +286,12 @@ export async function runStreamingChat(
         !plan.clarifyQuestion &&
         !plan.skipDiary &&
         plan.current.turns === 1;
-      const reviewManualSummary =
-        args.action === "summary" &&
-        !plan.skipDiary &&
-        !plan.recordCorrection &&
-        segment.length > 0;
+      const reviewRequestedRecord =
+        recordRequested && !plan.skipDiary && !plan.recordCorrection && segment.length > 0;
       if (
         plan.mayReflect ||
         reviewWorkIntroduction ||
-        reviewManualSummary ||
+        reviewRequestedRecord ||
         (plan.followupQuestion && plan.current.turns === 1 && confirmedReply)
       ) {
         await slot.extra();
@@ -365,7 +369,7 @@ export async function runStreamingChat(
         )
           reflectionStep = "fact";
         if (
-          (plan.mayReflect || reviewManualSummary || (confirmedReply && plan.followupQuestion)) &&
+          (plan.mayReflect || reviewRequestedRecord || (confirmedReply && plan.followupQuestion)) &&
           (confirmedMeaning ||
             (review.next === "diary" && (hasInsight || hasMeaning)) ||
             (voicedInsight && hasInsight))
@@ -391,7 +395,9 @@ export async function runStreamingChat(
         ((reply.mode === "continue" &&
           plan.openingQuestion &&
           emotionContext.category === "positive") ||
-          (args.action === "summary" && (reply.mode === "complete" || reply.mode === "close"))) &&
+          (recordRequested &&
+            !plan.recordCorrection &&
+            (reply.mode === "complete" || reply.mode === "close"))) &&
         reply.sentences.some((sentence) =>
           /(?:^|[^가-힣])(?:제가|내가|저는|나는|제|내)\s/.test(
             sentence.replace(/“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'/g, ""),
@@ -411,7 +417,7 @@ export async function runStreamingChat(
             followupQuestion: plan.followupQuestion,
             openingQuestion: plan.openingQuestion,
             recordCorrection: plan.recordCorrection,
-            ...(args.action === "summary" ? { manualSummary: true } : {}),
+            ...(recordRequested && !plan.recordCorrection ? { manualSummary: true } : {}),
             clarifyQuestion: plan.clarifyQuestion,
             asksForPracticalHelp: plan.asksForPracticalHelp,
             turn: plan.current.turns + 1,
