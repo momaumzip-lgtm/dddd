@@ -55,10 +55,12 @@ function provider(mode = "continue"): {
       reviewReadiness: async () => ({
         wish: "",
         meaning: "",
+        confirmedMeaning: "",
         reaction: "",
         insight: "",
         next: "continue",
       }),
+      reviewDiary: async () => "grounded",
       checkAttribution: async () => ({ edits: [] }),
       moderateOutputs: async (texts) => texts.map(() => false),
       moderate: async () => ({ flagged: false, categories: {} }),
@@ -1448,6 +1450,7 @@ test("a worry about a work mistake is a thought to check, with no automatic clos
   p.ai.reviewReadiness = async () => ({
     wish: "",
     meaning: "",
+    confirmedMeaning: "",
     reaction: message,
     insight: message,
     next: "diary",
@@ -1476,6 +1479,7 @@ test("an explicit personal insight can finish without a separately stated wish",
   p.ai.reviewReadiness = async () => ({
     wish: "",
     meaning: "",
+    confirmedMeaning: "",
     reaction: "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
     insight: "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
     next: "diary",
@@ -1515,26 +1519,23 @@ test("an explicit personal insight can finish without a separately stated wish",
     "일이 많아서만이 아니라 혼자 책임져야 한다는 생각 때문에 더 힘들었구나.",
   );
 });
-test("natural diary needs user evidence for the wish, its meaning and the response", async () => {
+test("automatic diary waits for grounded meaning and uses the response when available", async () => {
   const history = [
     { role: "user" as const, content: "끝까지 들어줬으면 했어." },
     { role: "assistant" as const, content: "말을 끊으면 어떤 기분이 들었어요?" },
     { role: "user" as const, content: "무시당한 기분이 드니까." },
     { role: "assistant" as const, content: "그럴 때는 말을 이어가나요?" },
   ];
-  for (const [grounded, next, turns] of [
-    [false, "diary", 2],
-    [true, "diary", 2],
-    [true, "meaning", 5],
-  ] as const) {
+  for (const grounded of [false, true]) {
     const { ai } = provider();
     const reaction = grounded ? "멈추게 돼" : "소리를 질러";
     ai.reviewReadiness = async () => ({
       wish: "끝까지 들어줬으면",
-      meaning: "무시당한 기분",
+      meaning: grounded ? "무시당한 기분" : "",
+      confirmedMeaning: "",
       reaction: grounded ? "어떻게 반응하세요?에 대한 답: " + reaction : reaction,
       insight: "",
-      next,
+      next: "diary",
     });
     const ordinary = ai.streamReply;
     ai.streamReply = async (messages, context, emit) => {
@@ -1555,7 +1556,7 @@ test("natural diary needs user evidence for the wish, its meaning and the respon
         ...args(),
         history,
         message: "멈추게 돼",
-        progress: { ...freshProgress, turns, questions: turns },
+        progress: { ...freshProgress, turns: 2, questions: 2 },
       },
       new Gate(new LuaStore(), cap),
       ai,
@@ -1564,6 +1565,99 @@ test("natural diary needs user evidence for the wish, its meaning and the respon
     assert.equal(reply.progress.completed, grounded);
     assert.equal(reply.surveyReady, grounded);
     assert.equal(Boolean(reply.diaryDraft), grounded);
+  }
+});
+test("an affirmed deeper meaning is recorded and a surface-only draft is regenerated", async () => {
+  const history = [
+    { role: "user" as const, content: "친구가 사과했으면 했어요. 축사를 쓰려고 고민했거든요." },
+    {
+      role: "assistant" as const,
+      content: "친구를 위해 들인 시간과 진심을 소중하게 대해주길 바랐던 걸까요?",
+    },
+  ];
+  const { ai } = provider();
+  ai.reviewReadiness = async () => ({
+    wish: "사과했으면",
+    meaning: "",
+    confirmedMeaning: "들인 시간과 진심을 소중하게 대해주길",
+    reaction: "",
+    insight: "",
+    next: "diary",
+  });
+  const shallow = "친구가 사과했으면 좋았겠구나.";
+  const discovery =
+    "사과를 바란 건 축사를 준비하며 들인 내 진심을 소중하게 대해주길 바랐기 때문이구나.";
+  ai.checkAttribution = async (_statements, fields, diaryIndex) => {
+    assert.equal(diaryIndex, null);
+    assert.equal(fields.length, 1);
+    return { edits: [] };
+  };
+  ai.reviewDiary = async (_segment, evidence, draft) => {
+    assert.equal(evidence.confirmedMeaning, "들인 시간과 진심을 소중하게 대해주길");
+    return draft === shallow ? "surface" : "grounded";
+  };
+  ai.streamReply = async (_messages, context, emit) => {
+    const heard = context.diaryFeedback === "surface";
+    const sentence = heard ? "축사에 마음을 쏟으셨군요." : "사과를 바랐다고 하셨군요.";
+    assert.equal(context.forceComplete, true);
+    await emit(sentence, { mode: "complete", safety: "normal" });
+    return {
+      mode: "complete",
+      safety: "normal",
+      sentences: [sentence],
+      sourceQuote: "사과했으면",
+      diaryDraft: heard ? discovery : shallow,
+    };
+  };
+  const result = await runStreamingChat(
+    {
+      ...args(),
+      history,
+      message: "응. 내가 마음 쓴 것까지 별일 아닌 것처럼 넘어가서 서운했어요.",
+      progress: { ...freshProgress, turns: 1, questions: 1 },
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.doesNotMatch(result.body, /사과를 바랐다고 하셨군요/);
+  assert.equal(result.diaryDraft, discovery);
+  assert.equal(result.surveyReady, true);
+});
+test("a proposed meaning does not become a diary entry after rejection or uncertainty", async () => {
+  for (const message of [
+    "아니요. 그 뜻은 아니에요.",
+    "응, 그렇진 않아요.",
+    "재밌었을 것 같아요.",
+  ]) {
+    const { ai } = provider();
+    ai.reviewReadiness = async () => ({
+      wish: "같이 놀고 싶었어요",
+      meaning: "",
+      confirmedMeaning: "함께하고 싶은 소중한 사람이라는 느낌",
+      reaction: "",
+      insight: "",
+      next: "diary",
+    });
+    ai.reviewDiary = async () => assert.fail("unconfirmed meaning must not produce a diary");
+    const result = await runStreamingChat(
+      {
+        ...args(),
+        history: [
+          { role: "user", content: "친구와 같이 놀고 싶었어요." },
+          { role: "assistant", content: "같이 놀면 뭐가 달랐을 것 같아요?" },
+          { role: "user", content: "재밌었을 것 같아요." },
+          { role: "assistant", content: "함께하고 싶은 소중한 사람이라는 느낌이 필요했을까요?" },
+        ],
+        message,
+        progress: { ...freshProgress, turns: 2, questions: 2 },
+      },
+      new Gate(new LuaStore(), cap),
+      ai,
+      () => {},
+    );
+    assert.equal(result.diaryDraft, null);
+    assert.equal(result.surveyReady, false);
   }
 });
 test("immediate endings and ordinary reluctance are separate intentions", () => {

@@ -23,6 +23,7 @@ export const reflectionReadiness = z
   .object({
     wish: z.string().max(200),
     meaning: z.string().max(200),
+    confirmedMeaning: z.string().max(200),
     reaction: z.string().max(200),
     insight: z.string().max(200),
     next: z.enum([
@@ -51,12 +52,18 @@ export type StreamContext = {
   clarifyQuestion?: boolean;
   asksForPracticalHelp?: boolean;
   reflectionStep?: Readiness["next"];
-  diaryEvidence?: Pick<Readiness, "wish" | "meaning" | "reaction" | "insight">;
+  diaryEvidence?: Pick<Readiness, "wish" | "meaning" | "confirmedMeaning" | "reaction" | "insight">;
+  diaryFeedback?: "surface" | "unsupported";
   turn: number;
   previousSafety: Safety;
 };
 export interface StreamingProvider {
   reviewReadiness(messages: Message[]): Promise<Readiness>;
+  reviewDiary(
+    messages: Message[],
+    evidence: NonNullable<StreamContext["diaryEvidence"]>,
+    draft: string,
+  ): Promise<"grounded" | "surface" | "unsupported">;
   moderateOutputs(texts: string[]): Promise<boolean[]>;
   checkAttribution: Parameters<typeof preserveAttribution>[2];
   moderate(text: string): Promise<{ flagged: boolean; categories: unknown }>;
@@ -89,6 +96,16 @@ function unreadableReply(reply: StreamReply) {
   );
 }
 const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
+function affirmsMeaning(text: string) {
+  return (
+    /^(?:응|네|맞아(?:요)?|맞습니다|맞네요|그게 맞아요|그렇(?:죠|습니다|네요)|그런 것 같아요|그게 중요했어요)(?:[\s.,!?。！？]|$)/.test(
+      text.trim(),
+    ) &&
+    !/아니(?:에요|예요|요)|(?:그런|그|그게|그건)\s*(?:뜻이?\s*)?(?:아니|아닌)|그렇지\s*않|그렇진|그것보다는|그보다는|맞긴|틀렸/.test(
+      text,
+    )
+  );
+}
 function selectSentences(
   text: string,
   allowQuestion: boolean,
@@ -241,15 +258,39 @@ export async function runStreamingChat(
       };
       let reflectionStep: Readiness["next"] | undefined;
       let diaryEvidence: StreamContext["diaryEvidence"];
+      let diaryFeedback: StreamContext["diaryFeedback"];
+      const segment = (args.action === "summary" ? args.history : messages).slice(
+        -(plan.current.turns * 2 + 1),
+      );
+      const lastUserIndex = segment.findLastIndex((message) => message.role === "user");
+      const lastUser = segment[lastUserIndex];
+      const preceding = segment[lastUserIndex - 1];
+      const lastQuestion =
+        preceding?.role === "assistant"
+          ? Array.from(sentenceBoundaries.segment(preceding.content)).at(-1)?.segment.trim() || ""
+          : "";
+      const confirmedReply =
+        lastUser?.role === "user" &&
+        /[?？]$/.test(lastQuestion) &&
+        affirmsMeaning(lastUser.content);
       const reviewWorkIntroduction =
         plan.workReflection &&
         plan.followupQuestion &&
         !plan.clarifyQuestion &&
         !plan.skipDiary &&
         plan.current.turns === 1;
-      if (plan.mayReflect || reviewWorkIntroduction) {
+      const reviewManualSummary =
+        args.action === "summary" &&
+        !plan.skipDiary &&
+        !plan.recordCorrection &&
+        segment.length > 0;
+      if (
+        plan.mayReflect ||
+        reviewWorkIntroduction ||
+        reviewManualSummary ||
+        (plan.followupQuestion && plan.current.turns === 1 && confirmedReply)
+      ) {
         await slot.extra();
-        const segment = messages.slice(-(plan.current.turns * 2 + 1));
         const review = await ai.reviewReadiness(segment);
         const userWords = segment
           .filter((m) => m.role === "user")
@@ -266,7 +307,16 @@ export async function runStreamingChat(
             ? latestWords
             : suggestedReaction;
         const grounded = (q: string) => q.length >= 2 && userWords.some((s) => s.includes(q));
-        const hasMeaning = grounded(meaning) && !wish.includes(meaning) && !meaning.includes(wish);
+        const hasMeaning =
+          grounded(meaning) &&
+          (!grounded(wish) || (!wish.includes(meaning) && !meaning.includes(wish)));
+        const proposed = review.confirmedMeaning.trim();
+        const confirmedMeaning =
+          confirmedReply &&
+          proposed.length >= 7 &&
+          lastQuestion.replace(/\s+/g, "").includes(proposed.replace(/\s+/g, ""))
+            ? proposed
+            : "";
         const hasReaction =
           grounded(reaction) &&
           reaction !== wish &&
@@ -303,30 +353,28 @@ export async function runStreamingChat(
           insight.length >= 7 &&
           grounded(insight) &&
           (voicedInsight ||
+            (hasMeaning && insight === meaning) ||
             [wish, meaning, reaction].some((quote) => grounded(quote) && insight !== quote));
-        const answeredReaction =
-          reaction === latestWords &&
-          (review.next === "reaction" ||
-            (review.next === "meaning" && hasMeaning && plan.current.turns >= 4));
-        const connectedExperience = grounded(wish) && hasMeaning && hasReaction;
         if (
           plan.workReflection &&
           !hasInsight &&
-          !connectedExperience &&
+          !hasMeaning &&
+          !confirmedMeaning &&
           /면.{0,26}(?:걸까\s*봐|될까\s*봐|(?:것|거)\s*같)|일까\s*봐/.test(latest) &&
           !/실제로|직접.{0,14}(?:말|들)|아무도|분명히.{0,10}했/.test(latest)
         )
           reflectionStep = "fact";
         if (
-          plan.mayReflect &&
-          (((review.next === "diary" || voicedInsight) && hasInsight) ||
-            (review.next === "diary" && connectedExperience) ||
-            (answeredReaction && connectedExperience))
+          (plan.mayReflect || reviewManualSummary || (confirmedReply && plan.followupQuestion)) &&
+          (confirmedMeaning ||
+            (review.next === "diary" && (hasInsight || hasMeaning)) ||
+            (voicedInsight && hasInsight))
         ) {
           reflectionStep = "diary";
           diaryEvidence = {
             wish: grounded(wish) ? review.wish : "",
-            meaning: hasMeaning ? review.meaning : "",
+            meaning: hasMeaning && !confirmedMeaning ? review.meaning : "",
+            confirmedMeaning,
             reaction: hasReaction
               ? reaction === latestWords
                 ? args.message
@@ -334,15 +382,15 @@ export async function runStreamingChat(
               : "",
             insight: hasInsight ? review.insight : "",
           };
-        } else if (reflectionStep === "diary")
-          reflectionStep = !grounded(wish) ? "wish" : !hasMeaning ? "meaning" : "reaction";
+        } else if (reflectionStep === "diary" || (grounded(wish) && !hasMeaning && !hasInsight))
+          reflectionStep = grounded(wish) ? "meaning" : "wish";
       }
       const finish = plan.forceComplete || reflectionStep === "diary";
       const emotionContext = selectionContext(emotion);
       const losesSpeaker = (reply: StreamReply) =>
-        ((plan.openingQuestion &&
-          emotionContext.category === "positive" &&
-          reply.mode === "continue") ||
+        ((reply.mode === "continue" &&
+          plan.openingQuestion &&
+          emotionContext.category === "positive") ||
           (args.action === "summary" && (reply.mode === "complete" || reply.mode === "close"))) &&
         reply.sentences.some((sentence) =>
           /(?:^|[^가-힣])(?:제가|내가|저는|나는|제|내)\s/.test(
@@ -357,6 +405,7 @@ export async function runStreamingChat(
             forceComplete: finish,
             reflectionStep,
             diaryEvidence,
+            diaryFeedback,
             listening: plan.listening,
             skipDiary: plan.skipDiary,
             followupQuestion: plan.followupQuestion,
@@ -460,7 +509,9 @@ export async function runStreamingChat(
         if (
           plan.briefDisappointment &&
           result.mode === "continue" &&
-          result.sentences.some((sentence) => /기대하|기대했|기대해|기대가/.test(sentence)) &&
+          result.sentences.some((sentence) =>
+            /기대하|기대했|기대해|기대가|기다리던|손꼽아/.test(sentence),
+          ) &&
           !messages.some(
             (message) =>
               message.role === "user" &&
@@ -501,6 +552,7 @@ export async function runStreamingChat(
               diaryEvidence?.insight,
               diaryEvidence?.reaction,
               diaryEvidence?.wish,
+              diaryEvidence?.confirmedMeaning ? lastUser?.content : null,
             ];
             const hasSource = quotes.some((quote) => {
               const words = quote?.replace(/\s/g, "");
@@ -515,6 +567,16 @@ export async function runStreamingChat(
           }
         }
         const question = result.sentences.at(-1) ?? "";
+        if (
+          reflectionStep === "meaning" &&
+          result.mode === "continue" &&
+          /어느\s*쪽|둘\s*중|그\s*중.{0,20}가까[운워]/.test(question)
+        )
+          throw new AppError(
+            502,
+            "QUESTION",
+            "지금 이야기와 이어지는 질문을 받지 못했어요. 다시 요청해 주세요.",
+          );
         if (
           plan.workReflection &&
           result.mode === "continue" &&
@@ -538,16 +600,35 @@ export async function runStreamingChat(
           ? [clarificationNote, ...result.sentences]
           : result.sentences;
         const candidates = visible.map((_, i) => visible.slice(0, i + 1).join(" "));
-        if (result.diaryDraft) candidates.push(result.diaryDraft);
-        const [verified, flags] = await Promise.all([
-          preserveAttribution(messages, result, async (statements, fields, diaryIndex, verify) => {
-            await slot.extra();
-            return ai.checkAttribution(statements, fields, diaryIndex, verify);
-          }),
+        const draft = result.diaryDraft;
+        if (draft) candidates.push(draft);
+        const evidence = diaryEvidence;
+        // A discovery can use a confirmed interpretation. Review its facts and meaning together.
+        const [attributed, flags, verdict] = await Promise.all([
+          preserveAttribution(
+            messages,
+            evidence ? { ...result, diaryDraft: undefined } : result,
+            async (statements, fields, diaryIndex, verify) => {
+              await slot.extra();
+              return ai.checkAttribution(statements, fields, diaryIndex, verify);
+            },
+          ),
           ai.moderateOutputs(candidates),
+          evidence && draft
+            ? slot.extra().then(() => ai.reviewDiary(segment, evidence, draft))
+            : ("grounded" as const),
         ]);
+        const verified = evidence ? { ...attributed, diaryDraft: draft } : attributed;
         if (unreadableReply(verified) || losesSpeaker(verified))
           throw new AppError(502, "FORMAT", "답변을 읽을 수 없어요. 입력은 그대로 남아 있어요.");
+        if (verdict !== "grounded") {
+          diaryFeedback = verdict;
+          throw new AppError(
+            502,
+            "DRAFT_MEANING",
+            "기록에 담을 마음을 확인하지 못했어요. 다시 요청해 주세요.",
+          );
+        }
         // The acknowledgement describes our previous question, not an actor in the user's story.
         result = clarificationNote
           ? { ...verified, sentences: [clarificationNote, ...verified.sentences] }
@@ -564,7 +645,9 @@ export async function runStreamingChat(
         if (
           suppressed ||
           !(error instanceof AppError) ||
-          !["FORMAT", "ATTRIBUTION", "QUESTION", "DRAFT_SOURCE"].includes(error.code)
+          !["FORMAT", "ATTRIBUTION", "QUESTION", "DRAFT_SOURCE", "DRAFT_MEANING"].includes(
+            error.code,
+          )
         )
           throw error;
         await slot.extra();
