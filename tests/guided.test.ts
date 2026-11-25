@@ -115,6 +115,10 @@ for (const scene of guidedScenes) {
     }
     if (scene.percent !== undefined)
       assert.equal(result.explorationView?.emotionIntensity.reported, scene.percent);
+    if (scene.id === "very-high")
+      assert.match(result.explorationView?.nextQuestion ?? "", /지금.*이어가도 괜찮으세요/);
+    if (scene.id === "positive-intensity")
+      assert.doesNotMatch(result.explorationView?.nextQuestion ?? "", /지금.*이어가도 괜찮으세요/);
   });
 }
 

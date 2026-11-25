@@ -79,6 +79,8 @@ export type GuidedPrompt = {
   ordinaryDistress?: boolean;
   clarifying?: boolean;
   gentleFollowup?: boolean;
+  openingPace?: boolean;
+  paceCheck?: boolean;
 };
 type Allowance = { extra(): Promise<void> };
 type Plan = ReturnType<typeof responsePlan>;
@@ -452,6 +454,15 @@ export async function runGuidedTurn({
   const emotionContext = selectionContext(
     evidence.selectedEmotion || state.start === 0 ? emotion : unknownEmotion,
   );
+  const openingPace = !history.length && !needsNoQuestions && !plan.asksForPracticalHelp;
+  const positiveOpening =
+    emotionContext.category === "positive" ||
+    (evidence.expressedEmotions.length > 0 &&
+      evidence.expressedEmotions.every((text) =>
+        /기쁘|기쁨|신나|즐거|행복|뿌듯|설레|감격/.test(text),
+      ));
+  const paceCheck = openingPace && !positiveOpening && emotionContext.pace === "veryHigh";
+  const paceQuestion = "이 이야기를 지금 조금 더 이어가도 괜찮으세요?";
   const oldQuestions = history
     .slice(-8)
     .filter((m) => m.role === "assistant")
@@ -465,6 +476,8 @@ export async function runGuidedTurn({
     intensityGuidance: pacingDirections[emotionContext.pace],
     clarifying: plan.clarifyQuestion,
     gentleFollowup,
+    openingPace,
+    paceCheck,
   };
   let body = "";
   let question = "";
@@ -526,7 +539,11 @@ export async function runGuidedTurn({
             text,
           )),
     );
-    const proposed = needsNoQuestions ? "" : lastQuestion(fields.at(-1) || "");
+    const proposed = paceCheck
+      ? paceQuestion
+      : needsNoQuestions
+        ? ""
+        : lastQuestion(fields.at(-1) || "");
     if (
       proposed &&
       (proposed.length > 180 ||
@@ -559,7 +576,17 @@ export async function runGuidedTurn({
       if (!(error instanceof AppError) || error.code !== "ATTRIBUTION") throw error;
     }
   }
+  if (!body && paceCheck) {
+    body = `편하신 속도로 이야기해도 괜찮아요. ${paceQuestion}`;
+    question = paceQuestion;
+  }
   body ||= "말씀해 주신 내용은 여기까지 잘 들었어요. 편하신 만큼 이어서 이야기해 주세요.";
+  if (
+    needsNoQuestions &&
+    /그냥\s*들어|질문\s*말고/.test(currentText) &&
+    !/편하신 만큼|듣고 있어/.test(body)
+  )
+    body += " 편하신 만큼 말씀해 주세요.";
   if (
     candidate &&
     basis &&
