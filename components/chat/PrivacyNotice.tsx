@@ -1,4 +1,5 @@
 import { Check } from "lucide-react";
+import { useState } from "react";
 import type { PublicConfig } from "@/lib/config";
 import { supportLink } from "@/lib/service-info";
 
@@ -8,9 +9,10 @@ export default function PrivacyNotice({
   starting,
 }: {
   config: PublicConfig;
-  onConfirm: () => void;
+  onConfirm: (rememberTab: boolean) => void;
   starting: boolean;
 }) {
+  const [rememberTab, setRememberTab] = useState(false);
   return (
     <>
       <h2 id="panel-title">대화 전에 잠깐 확인해 주세요</h2>
@@ -25,9 +27,9 @@ export default function PrivacyNotice({
       </p>
       <h3>남기고 싶은 문장은 먼저 복사해 주세요</h3>
       <p>
-        서비스는 대화 원문·요약·기록을 별도로 저장하지 않아요. 새로고침하거나 새 대화를 시작하거나
-        페이지를 떠나면 다시 불러올 수 없어요. 외부 서비스에는 보안 등을 위해 내용이 일정 기간 남을
-        수 있어요.
+        서비스는 대화 원문·요약·기록을 별도로 저장하지 않아요. 아래 선택을 켜면 이 탭에서 대화와
+        작성 중인 내용을 새로고침 후 불러올 수 있어요. 외부 서비스에는 보안 등을 위해 내용이 일정
+        기간 남을 수 있어요.
       </p>
       <h3>설문은 원할 때만 참여해 주세요</h3>
       <p>
@@ -38,8 +40,9 @@ export default function PrivacyNotice({
         <summary>데이터 전달·보관 자세히 보기</summary>
         <h3>대화와 이용 정보</h3>
         <p>
-          대화 원문·요약·기록은 서비스 DB나 브라우저 저장소에 남기지 않아요. 화면을 떠나도 외부에
-          이미 전달된 내용까지 삭제되지는 않아요.
+          대화 원문·요약·기록은 서비스 DB에 남기지 않아요. 탭에서 이어가기를 선택한 경우에만 이
+          브라우저 탭에 최근 저장 시점부터 최대 2시간 보관해요. 새 대화에서는 이 탭의 이전 기록을
+          지워요. 외부에 이미 전달된 내용은 별도의 기준에 따라 처리돼요.
         </p>
         <p>
           익명 세션 쿠키는 최대 2시간, 사용량 확인과 중복 요청 방지에 쓰는 기술 정보는 최대 25시간
@@ -66,7 +69,17 @@ export default function PrivacyNotice({
       <p className="fine-print">
         이 버튼은 안내를 확인하는 용도예요. 설문 참여와 제출 동의는 설문 화면에서 따로 선택해요.
       </p>
-      <button className="primary" onClick={onConfirm}>
+      {starting && (
+        <label className="tab-remember">
+          <input
+            type="checkbox"
+            checked={rememberTab}
+            onChange={(event) => setRememberTab(event.target.checked)}
+          />
+          이 탭에서 새로고침 후 이어가기 (선택)
+        </label>
+      )}
+      <button className="primary" onClick={() => onConfirm(rememberTab)}>
         <Check size={18} />
         {starting ? "확인하고 대화 시작하기" : "안내 닫기"}
       </button>

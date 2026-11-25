@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { explorationSchema } from "./exploration";
 export const progressSchema = z
   .object({
     turns: z.number().int().min(0).max(40),
     questions: z.number().int().min(0).max(40),
     completed: z.boolean(),
     messageIds: z.array(z.string().uuid()).max(40).optional(),
+    exploration: explorationSchema.optional(),
   })
   .strict();
 export type Progress = z.infer<typeof progressSchema>;
@@ -217,6 +219,7 @@ export function responsePlan(
     workReflection,
     listening,
     briefDisappointment,
+    declinesDiary: skipDiary,
     firstInput,
     openingQuestion,
     skipDiary: skipDiary || listening,

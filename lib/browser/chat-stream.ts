@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { explorationViewSchema } from "../exploration";
 export class ChatDisplayError extends Error {
   constructor(
     message: string,
@@ -40,11 +41,13 @@ export const completedChatSchema = z.object({
   diaryDraft: z.string().max(500).nullish(),
   turns: z.number(),
   questions: z.number(),
+  exploration: explorationViewSchema.optional(),
   emotion: z.object({
     emotionId: z.string(),
     customLabel: z.string(),
     intensityBand: z.string(),
     version: z.number(),
+    intensityPercent: z.number().int().min(0).max(100).optional(),
   }),
   conversationLimit: z.boolean().optional(),
   timing: z.record(z.string(), z.unknown()).optional(),

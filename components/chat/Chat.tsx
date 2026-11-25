@@ -12,9 +12,16 @@ import {
   X,
 } from "lucide-react";
 import { type Message, type PublicConfig } from "@/lib/config";
-import { z } from "zod";
 import PrivacyNotice from "./PrivacyNotice";
 import DiaryDraft from "./DiaryDraft";
+import MindRecordCard from "./MindRecordCard";
+import {
+  controlText,
+  stageLabels,
+  type ExplorationControl,
+  type ExplorationView,
+  type MindRecord,
+} from "@/lib/exploration";
 import { supportLink } from "@/lib/service-info";
 import Survey from "./Survey";
 import BrandMark from "./BrandMark";
@@ -34,9 +41,18 @@ import {
   type CompletedChat,
 } from "@/lib/browser/chat-stream";
 import { installPagePrivacy } from "@/lib/browser/privacy";
-const sessionResponse = z.object({ conversationId: z.string().uuid(), token: z.string() });
-type Session = { conversationId: string; token: string };
-type Pending = { text: string; action: "chat" | "summary" | "continue"; messageId?: string };
+import {
+  browserSessionSchema,
+  readTab,
+  saveTab,
+  forgetTab,
+  tabChatKey,
+  tabChatSchema,
+  tabSurveyKey,
+  type BrowserSession as Session,
+  type Pending,
+  type TabChat,
+} from "@/lib/browser/tab-memory";
 type Panel = "help" | "start" | "privacy" | "reset" | "survey" | "emotion" | null;
 async function openSession(signal: AbortSignal): Promise<Session> {
   const response = await fetch("/api/session", {
@@ -46,7 +62,7 @@ async function openSession(signal: AbortSignal): Promise<Session> {
     signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]),
   });
   if (!response.ok) throw await failedChatRequest(response);
-  return sessionResponse.parse(await response.json());
+  return browserSessionSchema.parse(await response.json());
 }
 export default function Chat({ config }: { config: PublicConfig }) {
   const [started, setStarted] = useState(false),
@@ -83,6 +99,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
   const [slowReply, setSlowReply] = useState(false);
   const [surveyAvailable, setSurveyAvailable] = useState(false);
   const [conversationLimit, setConversationLimit] = useState(false);
+  const [exploration, setExploration] = useState<ExplorationView | null>(null);
+  const [records, setRecords] = useState<Record<number, MindRecord>>({});
+  const [remember, setRemember] = useState(false);
+  const [surveySubmitted, setSurveySubmitted] = useState(false);
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
+  const retiring = useRef(false);
   const [invalidInput, setInvalidInput] = useState<string | null>(null);
   const [sessionInvalid, setSessionInvalid] = useState(false);
   const openingSession = useRef<{ controller: AbortController; promise: Promise<Session> } | null>(
@@ -97,17 +119,30 @@ export default function Chat({ config }: { config: PublicConfig }) {
     input = useRef<HTMLTextAreaElement>(null),
     dialog = useRef<HTMLDialogElement>(null),
     ime = useRef(false);
-  const reset = () => {
+  const reset = (preserveTab = false) => {
+    retiring.current = preserveTab;
+    if (!preserveTab) {
+      const saved = readTab(tabChatKey, tabChatSchema);
+      const conversationId = session?.conversationId || saved?.session?.conversationId;
+      if (conversationId) forgetTab(tabSurveyKey(conversationId));
+      forgetTab(tabChatKey);
+    }
     generation.current++;
     controller.current?.abort();
     running.current = false;
     setHistory([]);
     receipt.current = null;
     setStarted(false);
+    setAcknowledged(false);
     setEmotion(null);
     emotionRef.current = null;
     setCompletion("open");
     setDiaries({});
+    setRecords({});
+    setExploration(null);
+    setRemember(false);
+    setSurveySubmitted(false);
+    setStorageUnavailable(false);
     setStreamText("");
     continueRef.current = false;
     setDraft("");
@@ -126,10 +161,100 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setPanel(null);
     nearBottom.current = true;
   };
-  useLayoutEffect(() => (shell.current ? installPagePrivacy(shell.current, reset) : undefined), []);
+  function rememberCurrent(overrides: Partial<TabChat> = {}) {
+    if (!remember || !started || !emotion || retiring.current) return;
+    if (
+      !saveTab(tabChatKey, {
+        session,
+        history,
+        emotion,
+        draft,
+        pending,
+        receipt: receipt.current,
+        completion,
+        continueAfterRecord: continueRef.current,
+        exploration,
+        diaries,
+        records,
+        help,
+        surveyInvite,
+        surveyAvailable,
+        surveySubmitted,
+        panel: panel === "survey" ? "survey" : null,
+        conversationLimit,
+        ...overrides,
+      } satisfies TabChat)
+    )
+      setStorageUnavailable(true);
+  }
+  useLayoutEffect(() => {
+    rememberCurrent();
+  }, [
+    started,
+    remember,
+    session,
+    history,
+    emotion,
+    draft,
+    pending,
+    completion,
+    exploration,
+    diaries,
+    records,
+    help,
+    surveyInvite,
+    surveyAvailable,
+    surveySubmitted,
+    panel,
+    conversationLimit,
+  ]);
+  useLayoutEffect(
+    () =>
+      shell.current
+        ? installPagePrivacy(
+            shell.current,
+            () => reset(true),
+            () => {
+              const saved = readTab(tabChatKey, tabChatSchema);
+              if (!saved) return false;
+              retiring.current = false;
+              setRemember(true);
+              setAcknowledged(true);
+              setStarted(true);
+              selectEmotion(saved.emotion);
+              setSession(saved.session);
+              setHistory(saved.history);
+              setDraft(saved.draft);
+              receipt.current = saved.receipt;
+              continueRef.current = saved.continueAfterRecord;
+              setPending(saved.pending);
+              setCompletion(saved.completion);
+              setExploration(saved.exploration);
+              setDiaries(saved.diaries);
+              setRecords(saved.records);
+              setHelp(saved.help);
+              setSurveyInvite(saved.surveyInvite);
+              setSurveyAvailable(saved.surveyAvailable);
+              setSurveySubmitted(saved.surveySubmitted);
+              setConversationLimit(saved.conversationLimit);
+              setPanel(saved.panel);
+              if (saved.pending) {
+                setStatus("error");
+                setError(
+                  saved.receipt
+                    ? "받은 답변 접수를 아직 확인하지 않았어요. 같은 답변을 이어서 확인할 수 있어요."
+                    : "이어서 확인하지 못한 메시지가 있어요. 입력은 이 탭에 남아 있어요.",
+                );
+              }
+              return true;
+            },
+          )
+        : undefined,
+    [],
+  );
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
-    if (!started) return;
+    if (!started || session) return;
     const controller = new AbortController();
     const promise = openSession(controller.signal);
     openingSession.current = { controller, promise };
@@ -142,7 +267,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
         if (openingSession.current?.promise === promise) openingSession.current = null;
       });
     return () => controller.abort();
-  }, [started]);
+  }, [started, Boolean(session)]);
   useEffect(() => {
     if (panel) {
       dialog.current?.showModal();
@@ -175,7 +300,15 @@ export default function Chat({ config }: { config: PublicConfig }) {
     setUnread(false);
   };
   async function send(item?: Pending) {
-    if (running.current || conversationLimit || sessionInvalid || (!item && complete)) return;
+    if (
+      running.current ||
+      (conversationLimit &&
+        item?.action !== "summary" &&
+        receipt.current?.request.action !== "summary") ||
+      sessionInvalid ||
+      (!item && complete)
+    )
+      return;
     const request: Pending = receipt.current?.request ||
       item ||
       (pending && pending.text === draft.trim() ? pending : null) || {
@@ -244,6 +377,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
             history,
             message: request.text,
             action: request.action,
+            guided: true,
+            control: request.control,
           }),
           signal: deadline,
         });
@@ -274,6 +409,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
             "대화 연결을 확인하지 못했어요. 이전 대화는 이 화면에 남아 있어요.",
           );
         receipt.current = { data, active, request, selectedVersion, history: baseHistory };
+        rememberCurrent({ session: active, pending: request, receipt: receipt.current });
       }
       const confirmed = await fetch("/api/chat/ack", {
         method: "POST",
@@ -296,6 +432,9 @@ export default function Chat({ config }: { config: PublicConfig }) {
       setCompletion(data.completed ? "confirmed" : "open");
       const note = data.diaryDraft;
       if (note) setDiaries((previous) => ({ ...previous, [baseHistory.length + 1]: note }));
+      const record = data.exploration?.finalRecord;
+      if (record) setRecords((previous) => ({ ...previous, [baseHistory.length + 1]: record }));
+      if (data.exploration) setExploration(data.exploration);
       continueRef.current = false;
       receipt.current = null;
       setHistory([
@@ -331,6 +470,20 @@ export default function Chat({ config }: { config: PublicConfig }) {
         controller.current = null;
       }
     }
+  }
+  function choose(control: ExplorationControl) {
+    if (control === "more" || control === "explore")
+      requestAnimationFrame(() => input.current?.focus());
+    void send({
+      control,
+      text: controlText[control],
+      action:
+        control === "record" || control === "end"
+          ? "summary"
+          : continueRef.current
+            ? "continue"
+            : "chat",
+    });
   }
   return (
     <main ref={shell} className="app-shell">
@@ -392,11 +545,11 @@ export default function Chat({ config }: { config: PublicConfig }) {
           <div className="privacy-note">
             <ShieldCheck size={19} />
             <div>
-              <strong>저장하지 않는 대화</strong>
+              <strong>내가 선택하는 대화 보관</strong>
               <p>
-                앱은 대화를 저장하지 않아요.
+                서비스는 대화 원문을 별도로 저장하지 않아요.
                 <br />
-                새로고침하면 다시 불러올 수 없어요.
+                시작할 때 선택하면 이 탭에서만 이어갈 수 있어요.
               </p>
               <button onClick={() => setPanel("privacy")}>데이터 처리 안내 읽기</button>
             </div>
@@ -430,16 +583,28 @@ export default function Chat({ config }: { config: PublicConfig }) {
               <div className="current-emotion">
                 <span>
                   {emotion ? emotionLabel(emotion) : "미정"} ·{" "}
-                  {emotion?.intensityBand === "unknown"
-                    ? "강도 미정"
-                    : intensityBands.find((b) => b.id === emotion?.intensityBand)?.shortLabel ||
-                      "강도 미정"}
+                  {emotion?.intensityPercent !== undefined
+                    ? `${emotion.intensityPercent}%`
+                    : emotion?.intensityBand === "unknown"
+                      ? "강도 미정"
+                      : intensityBands.find((b) => b.id === emotion?.intensityBand)?.shortLabel ||
+                        "강도 미정"}
                 </span>
                 <button onClick={() => setPanel("emotion")}>바꾸기</button>
                 {surveyAvailable && !surveyInvite && !help && (
                   <button onClick={() => setPanel("survey")}>사용 경험 설문</button>
                 )}
-                <small>{complete ? "대화 마침" : help ? "안전 확인" : "이야기 중"}</small>
+                <small>
+                  {help
+                    ? "안전 확인"
+                    : complete && surveySubmitted
+                      ? stageLabels.COMPLETED
+                      : exploration
+                        ? stageLabels[exploration.conversationStage]
+                        : complete
+                          ? "대화 마침"
+                          : "이야기 중"}
+                </small>
               </div>
               <div
                 className="thread"
@@ -482,6 +647,11 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       : "현재 시범 운영 중이에요. 이용·개인정보 안내를 확인해 주세요."}
                   </p>
                 )}
+                {storageUnavailable && (
+                  <p className="setup-note" role="status">
+                    이 브라우저에서는 탭에 대화를 보관할 수 없어요.
+                  </p>
+                )}
                 {history.map((message, i) => (
                   <div key={i} className={`message ${message.role}`}>
                     {message.role === "assistant" && (
@@ -498,6 +668,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       )}
                       <p className="bubble">{message.content}</p>
                       {diaries[i] && <DiaryDraft initial={diaries[i]} />}
+                      {records[i] && (
+                        <MindRecordCard
+                          record={records[i]}
+                          onChange={(record) => setRecords((old) => ({ ...old, [i]: record }))}
+                        />
+                      )}
                     </div>
                   </div>
                 ))}
@@ -533,7 +709,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                       invalidInput === null &&
                       status !== "waiting" &&
                       !sessionInvalid &&
-                      !conversationLimit && (
+                      (!conversationLimit || pending.action === "summary") && (
                         <button onClick={() => void send(pending)}>
                           <RotateCcw size={16} />
                           {receipt.current ? "받은 답변 접수 다시 확인" : "다시 답변 받기"}
@@ -557,7 +733,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                     <p>
                       {sessionInvalid
                         ? "연결 중단이나 만료로 대화 상태를 확인하지 못했어요. 필요한 내용은 이 화면에서 확인할 수 있어요. 새 대화는 직접 선택해 주세요."
-                        : "대화 길이에 도달했어요. 필요한 내용은 이 화면에서 확인할 수 있어요. 새 대화는 직접 선택해 주세요."}
+                        : "대화 길이에 도달했어요. 지금까지의 이야기는 마음 기록으로 남길 수 있어요."}
                     </p>
                     <div>
                       <button onClick={() => setPanel("reset")}>새 대화 시작</button>
@@ -568,21 +744,58 @@ export default function Chat({ config }: { config: PublicConfig }) {
                   !complete &&
                   !help &&
                   !pending &&
-                  !continueRef.current &&
                   !sessionInvalid &&
-                  !conversationLimit && (
-                    <button
-                      type="button"
-                      className="continue-chat secondary"
-                      onClick={() => {
-                        void send({
-                          action: "summary",
-                          text: "지금까지 이야기한 내용으로 정리해 주세요.",
-                        });
-                      }}
-                    >
-                      지금 정리하기
-                    </button>
+                  !continueRef.current && (
+                    <div className="reflection-options" aria-label="대화 진행 선택">
+                      {exploration?.offerRecord && (
+                        <p role="status">
+                          오늘 이야기에서 중요한 마음을 조금 발견한 것 같아요. 조금 더 이야기할까요,
+                          아니면 지금까지의 마음을 기록으로 남길까요?
+                        </p>
+                      )}
+                      <div className="reflection-buttons">
+                        {!conversationLimit &&
+                          (exploration?.offerRecord ? (
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => choose("more")}
+                            >
+                              조금 더 이야기하기
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => choose("explore")}
+                            >
+                              마음 더 들여다보기
+                            </button>
+                          ))}
+                        {!conversationLimit && exploration?.nextQuestion && (
+                          <>
+                            <button type="button" onClick={() => choose("skip")}>
+                              다른 질문으로 넘어가기
+                            </button>
+                            <button type="button" onClick={() => choose("unsure")}>
+                              잘 모르겠어요
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => choose("record")}
+                        >
+                          마음 기록 완성하기
+                        </button>
+                        {!conversationLimit && (
+                          <button type="button" onClick={() => choose("end")}>
+                            오늘은 여기까지
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   )}
                 {complete && !help && (
                   <button
@@ -600,7 +813,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                 {surveyInvite && !help && (
                   <div className="survey-invite">
                     <span className="eyebrow">오늘의 대화를 마무리하며</span>
-                    <p>이번 대화는 어떠셨나요?</p>
+                    <p>{surveySubmitted ? "설문을 접수했어요." : "이번 대화는 어떠셨나요?"}</p>
                     <a
                       href="#survey"
                       onClick={(event) => {
@@ -608,7 +821,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
                         setPanel("survey");
                       }}
                     >
-                      사용 경험 알려주기
+                      {surveySubmitted ? "설문 접수 확인" : "사용 경험 알려주기"}
                     </a>
                     <small>선택 참여 · 기록을 복사하지 않아도 참여할 수 있어요</small>
                   </div>
@@ -779,8 +992,10 @@ export default function Chat({ config }: { config: PublicConfig }) {
           <PrivacyNotice
             config={config}
             starting={panel === "start"}
-            onConfirm={() => {
+            onConfirm={(rememberTab) => {
               if (panel === "start") {
+                retiring.current = false;
+                setRemember(rememberTab);
                 setAcknowledged(true);
                 setStarted(true);
                 requestAnimationFrame(() => input.current?.focus());
@@ -818,6 +1033,8 @@ export default function Chat({ config }: { config: PublicConfig }) {
           contact={config.contact}
           session={session}
           onSession={setSession}
+          remember={remember}
+          onSubmitted={() => setSurveySubmitted(true)}
           onClose={() => setPanel(null)}
         />
       </dialog>

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, LoaderCircle, Send } from "lucide-react";
 import { supportLink } from "@/lib/service-info";
 import { z } from "zod";
+import { readTab, saveTab, tabSurveyKey } from "@/lib/browser/tab-memory";
 import {
   SURVEY_VERSION,
   surveyQuestions,
@@ -21,6 +22,23 @@ type Attempt = {
   consent: true;
   answers: SurveyDraft;
 };
+const localAnswers = z
+  .record(z.string(), z.union([z.string().max(500), z.number(), z.null()]))
+  .transform((answers) => answers as SurveyDraft);
+const localSurvey = z.object({
+  answers: localAnswers,
+  status: z.enum(["idle", "sending", "error", "done"]),
+  attempt: z
+    .object({
+      requestId: z.string().uuid(),
+      conversationId: z.string().uuid(),
+      token: z.string().max(4096),
+      version: z.literal(SURVEY_VERSION),
+      consent: z.literal(true),
+      answers: localAnswers,
+    })
+    .nullable(),
+});
 class SurveyError extends Error {}
 export default function Survey({
   visible,
@@ -29,6 +47,8 @@ export default function Survey({
   session,
   onSession,
   onClose,
+  remember,
+  onSubmitted,
 }: {
   visible: boolean;
   config: SurveyConfig;
@@ -36,6 +56,8 @@ export default function Survey({
   session: Session | null;
   onSession: (value: Session) => void;
   onClose: () => void;
+  remember: boolean;
+  onSubmitted: () => void;
 }) {
   const consentNote = useRef<HTMLParagraphElement>(null);
   const [answers, setAnswers] = useState<SurveyDraft>({});
@@ -43,6 +65,8 @@ export default function Survey({
   const [status, setStatus] = useState<"idle" | "sending" | "error" | "done">("idle"),
     [error, setError] = useState("");
   const [locked, setLocked] = useState(false);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const memoryKey = remember && session ? tabSurveyKey(session.conversationId) : null;
   const attempt = useRef<Attempt | null>(null),
     controller = useRef<AbortController | null>(null),
     busy = useRef(false),
@@ -54,6 +78,24 @@ export default function Survey({
       controller.current?.abort();
     };
   }, []);
+  useEffect(() => {
+    if (!memoryKey) return;
+    const saved = readTab(memoryKey, localSurvey);
+    if (saved) {
+      attempt.current = saved.attempt;
+      setAnswers(saved.answers);
+      setLocked(Boolean(saved.attempt));
+      setStatus(saved.status === "sending" ? "error" : saved.status);
+      if (saved.status === "done") onSubmitted();
+      if (saved.status === "sending" || saved.status === "error")
+        setError("설문 접수를 확인하지 못했어요. 같은 접수번호로 확인할 수 있어요.");
+    }
+    setLoadedKey(memoryKey);
+  }, [memoryKey]);
+  useEffect(() => {
+    if (memoryKey && loadedKey === memoryKey)
+      saveTab(memoryKey, { answers, status, attempt: attempt.current });
+  }, [memoryKey, loadedKey, answers, status, locked]);
   async function submit() {
     if (busy.current || status === "done" || !config.ready || !answers.entryRoute) return;
     busy.current = true;
@@ -86,6 +128,12 @@ export default function Survey({
         };
         setLocked(true);
       }
+      if (remember)
+        saveTab(tabSurveyKey(attempt.current.conversationId), {
+          answers,
+          status: "sending",
+          attempt: attempt.current,
+        });
       const response = await fetch("/api/survey", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -97,6 +145,13 @@ export default function Survey({
       if (!response.ok) throw new SurveyError(z.object({ error: z.string() }).parse(raw).error);
       z.object({ accepted: z.literal(true) }).parse(raw);
       setStatus("done");
+      if (remember)
+        saveTab(tabSurveyKey(attempt.current.conversationId), {
+          answers,
+          status: "done",
+          attempt: attempt.current,
+        });
+      onSubmitted();
     } catch (e) {
       if (live.current) {
         setStatus("error");

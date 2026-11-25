@@ -1885,3 +1885,86 @@ dialog .fine-print {
     display: none;
   }
 }
+.reflection-options {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 20px;
+}
+.reflection-options > p {
+  padding: 12px 14px;
+  margin: 0;
+  border-radius: 12px;
+  background: var(--soft, #edf2e8);
+  line-height: 1.6;
+}
+.reflection-buttons,
+.record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.reflection-buttons button,
+.record-actions button {
+  min-height: 44px;
+  padding: 7px 12px;
+  border: 1px solid var(--line, #d6dfd2);
+  border-radius: 10px;
+}
+.intensity-detail {
+  margin-top: 14px;
+}
+.intensity-detail label,
+.intensity-detail > div {
+  display: block;
+  margin: 8px 0;
+}
+.intensity-detail > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.intensity-detail input {
+  flex: 1;
+  min-width: 0;
+}
+.tab-remember {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 0;
+  min-height: 44px;
+  line-height: 1.4;
+}
+.mind-record {
+  display: grid;
+  gap: 14px;
+}
+.mind-record h2,
+.mind-record h3,
+.mind-record p,
+.mind-record ul {
+  margin: 0;
+}
+.mind-record h2 {
+  font-size: 1.15rem;
+}
+.mind-record h3 {
+  font-size: 0.98rem;
+}
+.mind-record p,
+.mind-record li {
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.mind-section {
+  padding-top: 10px;
+  border-top: 1px solid var(--line, #d6dfd2);
+}
+.mind-need {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--soft, #edf2e8);
+}
+.mind-record ul {
+  padding-left: 1.4rem;
+}

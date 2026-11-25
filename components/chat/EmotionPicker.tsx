@@ -6,6 +6,7 @@ import {
   searchEmotions,
   intensityBands,
   emotionLabel,
+  paceFor,
   type EmotionSelection,
 } from "@/lib/emotions";
 export default function EmotionPicker({
@@ -22,6 +23,7 @@ export default function EmotionPicker({
       value && value.intensityBand !== "unknown" ? value.intensityBand : null,
     ),
     [custom, setCustom] = useState(value?.customLabel || "");
+  const [percent, setPercent] = useState<number | undefined>(value?.intensityPercent);
   const [category, setCategory] = useState("all"),
     [query, setQuery] = useState(""),
     [expanded, setExpanded] = useState(!value),
@@ -38,12 +40,14 @@ export default function EmotionPicker({
   const pick = (id: string) => {
     setChosen(id);
     setBand(null);
+    setPercent(undefined);
     confirmEmotion();
   };
   const selection: EmotionSelection = {
     emotionId: chosen || "unknown",
     customLabel: chosen === "custom" ? custom.trim() : "",
     intensityBand: band || "unknown",
+    ...(percent === undefined ? {} : { intensityPercent: percent }),
     version: (value?.version || 0) + 1,
   };
   const valid =
@@ -65,7 +69,7 @@ export default function EmotionPicker({
       </h1>
       {expanded && (
         <p>
-          지금 마음에 가까운 감정을 골라보세요. 대화를 나눈 뒤 원할 때 한두 문장으로 남길 수 있어요.
+          지금 마음에 가까운 감정을 골라보세요. 대화를 나눈 뒤 원할 때 마음 기록으로 남길 수 있어요.
         </p>
       )}
       {chosen && !expanded ? (
@@ -184,13 +188,48 @@ export default function EmotionPicker({
                 type="button"
                 key={b.id}
                 aria-pressed={band === b.id}
-                onClick={() => setBand(b.id)}
+                onClick={() => {
+                  setBand(b.id);
+                  setPercent(undefined);
+                }}
               >
                 {band === b.id && <Check size={16} />}
                 <strong>{b.label}</strong>
               </button>
             ))}
           </div>
+          <details className="intensity-detail">
+            <summary>숫자로 강도 고르기 (선택)</summary>
+            <label htmlFor="emotion-percent">
+              직접 느낀 강도 {percent === undefined ? "" : `${percent}%`}
+            </label>
+            <div>
+              <input
+                id="emotion-percent"
+                type="range"
+                min="0"
+                max="100"
+                value={percent ?? 50}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  const pace = paceFor(next);
+                  setPercent(next);
+                  setBand(pace === "veryHigh" ? "high" : pace);
+                }}
+              />
+              {percent === undefined && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPercent(50);
+                    setBand("medium");
+                  }}
+                >
+                  50% 선택
+                </button>
+              )}
+            </div>
+          </details>
         </fieldset>
       )}
       <div className="emotion-start">

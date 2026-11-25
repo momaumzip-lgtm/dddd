@@ -9,6 +9,7 @@ import { DatabaseStore } from "@/lib/server/database";
 import { PROMPT_VERSION } from "@/lib/server/prompts";
 import { runChat } from "@/lib/server/chat";
 import { AppError, explainProviderError } from "@/lib/server/errors";
+import { controlText } from "@/lib/exploration";
 export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   const arrived = performance.now();
@@ -30,9 +31,19 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) throw new AppError(400, "INPUT", "입력 내용을 확인해 주세요.");
     const p = parsed.data,
       c = limits();
+    if (p.control && (!p.guided || p.message !== controlText[p.control]))
+      throw new AppError(400, "INPUT", "대화 선택을 확인해 주세요.");
     if (p.message.length > c.input)
       throw new AppError(413, "INPUT_LENGTH", `한 번에 ${c.input}자까지 보낼 수 있어요.`);
-    if (p.history.reduce((n, m) => n + m.content.length, 0) + p.message.length > c.history)
+    const length = p.history.reduce((n, m) => n + m.content.length, 0) + p.message.length;
+    const reserveRecord =
+      p.guided && (p.action === "summary" || p.control === "record" || p.control === "end");
+    if (
+      length > (p.guided ? 32000 : c.history) ||
+      (p.guided &&
+        !reserveRecord &&
+        (p.history.length >= MAX_HISTORY_MESSAGES - 2 || length > 28500))
+    )
       throw new AppError(
         409,
         "CONTEXT",
@@ -58,7 +69,7 @@ export async function POST(req: NextRequest) {
         "AI 대화 설정을 준비 중이에요. 도움 받기는 계속 이용할 수 있어요.",
       );
     const { AI } = await import("@/lib/server/openai");
-    if (req.headers.get("accept")?.includes("application/x-ndjson")) {
+    if (p.guided || req.headers.get("accept")?.includes("application/x-ndjson")) {
       const { runStreamingChat } = await import("@/lib/server/stream-chat");
       const readyMs = performance.now() - arrived;
       const encoder = new TextEncoder();
@@ -83,6 +94,8 @@ export async function POST(req: NextRequest) {
                 message: p.message,
                 action: p.action,
                 emotion: p.emotion,
+                guided: p.guided,
+                control: p.control,
               },
               new Gate(new DatabaseStore(), c),
               new AI(chatModel(), c.output, { signal: req.signal, requestId: p.requestId }),
@@ -93,7 +106,8 @@ export async function POST(req: NextRequest) {
               p.conversationId,
               result.history,
               result.safety,
-              result.progress.completed ? "end" : "emotion",
+              result.explorationView?.conversationStage ||
+                (result.progress.completed ? "end" : "emotion"),
               result.revision,
               result.progress,
               p.requestId,
@@ -108,10 +122,16 @@ export async function POST(req: NextRequest) {
               completed: result.progress.completed,
               surveyReady: result.surveyReady,
               diaryDraft: result.diaryDraft,
+              exploration: result.explorationView,
               turns: result.progress.turns,
               questions: result.progress.questions,
               emotion: selectionForClient(result.emotion, raw?.emotion?.intensityBand),
-              conversationLimit: result.history.length >= MAX_HISTORY_MESSAGES,
+              conversationLimit:
+                result.history.length >= MAX_HISTORY_MESSAGES - (p.guided ? 2 : 0) ||
+                Boolean(
+                  p.guided &&
+                  result.history.reduce((total, item) => total + item.content.length, 0) > 27000,
+                ),
               timing: {
                 promptVersion: PROMPT_VERSION,
                 model: chatModel(),

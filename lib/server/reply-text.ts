@@ -18,3 +18,55 @@ export function hasOutputInstructions(text: string) {
     modelArtifacts.test(text)
   );
 }
+
+export const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
+export function selectSentences(
+  text: string,
+  allowQuestion: boolean,
+  diarySummary: boolean,
+  displayed: Set<string>,
+) {
+  const kept: string[] = [];
+  let asked = false;
+  for (const part of sentenceBoundaries.segment(text)) {
+    const sentence = part.segment.trim();
+    if (!sentence) continue;
+    // The editor supplies its own invitation after the grounded summary.
+    if (
+      diarySummary &&
+      /(?:다이어리|일기|기록|초안).{0,28}(?:남겨|적어|써|복사해|고쳐)\s*(?:보셔도|보세요|두세요|주세요)/.test(
+        sentence,
+      )
+    )
+      continue;
+    const marks = sentence.match(/[?？؟﹖]/g)?.length ?? 0;
+    const question =
+      marks > 0 ||
+      /(?:느낀|마음에 남은|떠오른|기억나는|힘들었던).{0,18}(?:순간|때|생각|일|말|것)(?:이|은)?\s*있었어요[.。]+$/.test(
+        sentence,
+      ) ||
+      /(?:어떻게|뭐|무슨|어떤|어느|무엇).*(?:했어요|받았어요|들었어요|이?었어요|였어요|있었어요|싶었어요|바랐어요|원했어요|중요해요)요?[.。]*$/.test(
+        sentence,
+      ) ||
+      /까요[,，]\s*아니면/.test(sentence) ||
+      /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|싶으세요|바라세요|원하세요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
+        sentence,
+      );
+    if (question) {
+      if (
+        !allowQuestion ||
+        asked ||
+        marks > 1 ||
+        /그리고|또한|무엇.*어떻|어떤.*왜|인지.*인지/.test(sentence)
+      )
+        continue;
+      asked = true;
+    }
+    const key = sentence.replace(/[.!?。！？]+$/, "").replace(/\s+/g, "");
+    if (!displayed.has(key)) {
+      displayed.add(key);
+      kept.push(sentence);
+    }
+  }
+  return { text: kept.join(" "), asked };
+}

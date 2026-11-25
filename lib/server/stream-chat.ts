@@ -3,11 +3,13 @@ import type { Message } from "../config";
 import { DIARY_INVITATION, freshProgress, responsePlan, type Progress } from "../conversation";
 import { correctedSelection, selectionContext, type EmotionSelection } from "../emotions";
 import { AppError } from "./errors";
-import { hasOutputInstructions } from "./reply-text";
+import { hasOutputInstructions, selectSentences, sentenceBoundaries } from "./reply-text";
 import { preserveAttribution } from "./attribution";
 import type { Gate } from "./limits";
 import type { Safety } from "./schemas";
 import { urgent, retainRisk, safetyReply, safetyText, hasSafetyClarification } from "./safety";
+import { runGuidedTurn, type GuidedEvidence, type GuidedPrompt } from "./guided-chat";
+import type { ExplorationControl, ExplorationView, MindRecord, Observation } from "../exploration";
 export const streamReplySchema = z
   .object({
     mode: z.enum(["continue", "complete", "close", "safety", "refusal"]),
@@ -57,10 +59,22 @@ export type StreamContext = {
   repairSummarySpeaker?: boolean;
   rejectedMeaning?: boolean;
   retryConversation?: boolean;
+  guided?: GuidedPrompt;
   turn: number;
   previousSafety: Safety;
 };
 export interface StreamingProvider {
+  reviewExploration(messages: Message[], evidence: GuidedEvidence): Promise<Observation>;
+  generateMindRecord(
+    messages: Message[],
+    evidence: GuidedEvidence,
+    retry: boolean,
+  ): Promise<MindRecord>;
+  reviewMindRecord(
+    messages: Message[],
+    evidence: GuidedEvidence,
+    record: MindRecord,
+  ): Promise<boolean>;
   reviewReadiness(messages: Message[]): Promise<Readiness>;
   reviewDiary(
     messages: Message[],
@@ -98,7 +112,6 @@ function unreadableReply(reply: StreamReply) {
     )
   );
 }
-const sentenceBoundaries = new Intl.Segmenter("ko", { granularity: "sentence" });
 const rejectsProposedMeaning =
   /그(?:런)?\s*(?:뜻|의미|느낌|해석)(?:이|은|는)?\s*아니|그렇(?:지\s*않|진\s*않)|그(?:보다는|것보다는)/;
 function affirmsMeaning(text: string) {
@@ -109,56 +122,6 @@ function affirmsMeaning(text: string) {
     !rejectsProposedMeaning.test(text) &&
     !/아니(?:에요|예요|요)|(?:그런|그|그게|그건)\s*(?:뜻이?\s*)?(?:아니|아닌)|맞긴|틀렸/.test(text)
   );
-}
-function selectSentences(
-  text: string,
-  allowQuestion: boolean,
-  diarySummary: boolean,
-  displayed: Set<string>,
-) {
-  const kept: string[] = [];
-  let asked = false;
-  for (const part of sentenceBoundaries.segment(text)) {
-    const sentence = part.segment.trim();
-    if (!sentence) continue;
-    // The editor supplies its own invitation after the grounded summary.
-    if (
-      diarySummary &&
-      /(?:다이어리|일기|기록|초안).{0,28}(?:남겨|적어|써|복사해|고쳐)\s*(?:보셔도|보세요|두세요|주세요)/.test(
-        sentence,
-      )
-    )
-      continue;
-    const marks = sentence.match(/[?？؟﹖]/g)?.length ?? 0;
-    const question =
-      marks > 0 ||
-      /(?:느낀|마음에 남은|떠오른|기억나는|힘들었던).{0,18}(?:순간|때|생각|일|말|것)(?:이|은)?\s*있었어요[.。]+$/.test(
-        sentence,
-      ) ||
-      /(?:어떻게|뭐|무슨|어떤|어느|무엇).*(?:했어요|받았어요|들었어요|이?었어요|였어요|있었어요|싶었어요|바랐어요|원했어요|중요해요)요?[.。]*$/.test(
-        sentence,
-      ) ||
-      /까요[,，]\s*아니면/.test(sentence) ||
-      /(?:나요|인가요|한가요|떤가요|까요|습니까|어때요|싶으세요|바라세요|원하세요|주실래요|말씀해\s?주세요|말해\s?주세요|알려\s?주세요)[.。]*$/.test(
-        sentence,
-      );
-    if (question) {
-      if (
-        !allowQuestion ||
-        asked ||
-        marks > 1 ||
-        /그리고|또한|무엇.*어떻|어떤.*왜|인지.*인지/.test(sentence)
-      )
-        continue;
-      asked = true;
-    }
-    const key = sentence.replace(/[.!?。！？]+$/, "").replace(/\s+/g, "");
-    if (!displayed.has(key)) {
-      displayed.add(key);
-      kept.push(sentence);
-    }
-  }
-  return { text: kept.join(" "), asked };
 }
 export async function runStreamingChat(
   args: {
@@ -173,6 +136,8 @@ export async function runStreamingChat(
     message: string;
     action: string;
     emotion: EmotionSelection;
+    guided?: boolean;
+    control?: ExplorationControl;
   },
   gate: Gate,
   ai: StreamingProvider,
@@ -197,6 +162,7 @@ export async function runStreamingChat(
   const slot = await gate.enter(args.sid, args.cid, args.rid, args.revision);
   const emotion = correctedSelection(args.emotion, args.message),
     plan = responsePlan(args.progress, args.action, args.message, args.history);
+  const turns = plan.current.turns + (args.action === "summary" || args.control ? 0 : 1);
   const messages: Message[] = [...args.history, { role: "user", content: args.message }];
   const recordRequested = args.action === "summary" || plan.recordStory !== null;
   const recordInput: Message[] =
@@ -217,6 +183,8 @@ export async function runStreamingChat(
     questions = 0,
     mode = "continue",
     firstMs: number | undefined;
+  let exploration = !args.guided ? undefined : args.progress.exploration;
+  let explorationView: ExplorationView | undefined;
   const admissionMs = performance.now() - started;
   let modelFirstTextMs: number | undefined;
   let generationStartedMs: number | undefined;
@@ -255,6 +223,26 @@ export async function runStreamingChat(
     if (safety !== "normal") {
       publish(safetyReply(args.safety, safety));
       mode = "safety";
+    } else if (!body && args.guided) {
+      const start = performance.now();
+      const outcome = await runGuidedTurn({
+        ai,
+        slot,
+        history: args.history,
+        latest: args.message,
+        plan,
+        emotion,
+        previous: exploration,
+        control: args.control,
+        restart: args.action === "continue",
+        turns,
+      });
+      exploration = outcome.state;
+      explorationView = outcome.view;
+      safety = outcome.safety;
+      questions = outcome.questions;
+      generationMs = performance.now() - start;
+      publish(outcome.body);
     } else if (!body) {
       const genStart = performance.now();
       generationStartedMs = genStart - started;
@@ -794,13 +782,18 @@ export async function runStreamingChat(
       safety !== "normal"
         ? { ...plan.current, completed: false }
         : {
-            turns: plan.current.turns + (args.action === "summary" ? 0 : 1),
+            turns,
             questions: plan.current.questions + questions,
-            completed:
-              (plan.forceComplete && (mode === "complete" || mode === "close")) ||
-              Boolean(diaryDraft),
+            completed: args.guided
+              ? Boolean(explorationView?.userRequestedCompletion)
+              : (plan.forceComplete && (mode === "complete" || mode === "close")) ||
+                Boolean(diaryDraft),
           };
-    const surveyReady = progress.completed && safety === "normal";
+    if (exploration) progress.exploration = exploration;
+    const surveyReady =
+      progress.completed &&
+      safety === "normal" &&
+      (!args.guided || Boolean(explorationView?.finalRecord));
     if (diaryDraft && safety === "normal") publish("\n\n" + DIARY_INVITATION);
     progress.messageIds = [...(args.progress.messageIds || []), messageId];
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");
@@ -809,6 +802,7 @@ export async function runStreamingChat(
     return {
       body,
       surveyReady,
+      explorationView,
       diaryDraft,
       history: [...messages, { role: "assistant" as const, content: body }],
       safety,

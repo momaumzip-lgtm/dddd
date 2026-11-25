@@ -52,6 +52,10 @@ function provider(mode = "continue"): {
   return {
     calls,
     ai: {
+      reviewExploration: async () => assert.fail("legacy client must not call guided review"),
+      generateMindRecord: async () =>
+        assert.fail("legacy client must not generate a guided record"),
+      reviewMindRecord: async () => assert.fail("legacy client must not review a guided record"),
       reviewReadiness: async () => ({
         wish: "",
         meaning: "",

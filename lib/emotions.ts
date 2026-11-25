@@ -171,6 +171,7 @@ export const emotionSelectionSchema = z
       ),
     customLabel: z.string().trim().max(40).default(""),
     intensityBand: intensityBandSchema,
+    intensityPercent: z.number().int().min(0).max(100).optional(),
     version: z.number().int().min(0).max(10000),
   })
   .strict()
@@ -195,14 +196,20 @@ export function emotionLabel(value: EmotionSelection) {
     ? value.customLabel
     : emotionCatalog.find((e) => e.id === value.emotionId)?.label || "잘 모르겠어요";
 }
+export function paceFor(percent?: number, band: EmotionSelection["intensityBand"] = "unknown") {
+  if (percent === undefined) return band;
+  return percent <= 30 ? "low" : percent <= 60 ? "medium" : percent <= 80 ? "high" : "veryHigh";
+}
 export function selectionContext(value: EmotionSelection) {
   const entry = emotionCatalog.find((e) => e.id === value.emotionId);
+  const pace = paceFor(value.intensityPercent, value.intensityBand);
   return {
     emotionId: value.emotionId,
     version: value.version,
     emotion: emotionLabel(value),
     category: entry?.category || "unknown",
     intensityBand: value.intensityBand,
+    pace,
     responseGuidance: {
       low:
         entry?.category === "positive"
@@ -216,8 +223,12 @@ export function selectionContext(value: EmotionSelection) {
         entry?.category === "positive"
           ? "기쁜 장면을 충분히 반긴다. 실제로 했던 일이나 들은 말에서 오래 기억하고 싶은 한 지점을 짧게 묻는다. 새로운 계획이나 다시 할 의향을 전제하지 않는다. 이미 말한 기쁨을 되묻거나 진정하라는 안내를 붙이지 않는다."
           : "그 자리에 있었던 사람에게 다정하게 한마디 건넨다. 방금 나온 구체적인 상황에 맞춰 듣고 싶었던 말이나 받고 싶은 도움 중 한 가지만 짧게 묻는다. 공개적으로 상처 주는 말을 들었다면 그 말을 한 사람에게 듣고 싶었던 말로 초점을 좁힌다. 원인이나 경위를 설명시키지 않는다. 강도 자체는 위험 신호가 아니다.",
+      veryHigh:
+        entry?.category === "positive"
+          ? "기쁜 마음을 있는 그대로 반겨요. 한꺼번에 원인이나 계획을 묻지 말고 기억하고 싶은 한 순간을 쉽게 묻습니다."
+          : "먼저 지금 이어서 말해도 괜찮을지 부담과 속도를 살핍니다. 한두 마디만 해도 된다고 안내하고 깊은 원인 탐색을 미룹니다. 강도 숫자만으로 위험을 단정하지 않습니다.",
       unknown: "강도를 추측하거나 숫자로 만들지 않고 말한 경험부터 다룬다.",
-    }[value.intensityBand],
+    }[pace],
   };
 }
 const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
@@ -254,6 +265,7 @@ export function correctedSelection(value: EmotionSelection, message: string): Em
         emotionId: found.id,
         customLabel: "",
         intensityBand: "unknown",
+        ...(value.intensityPercent !== undefined ? { intensityPercent: undefined } : {}),
         version: value.version + 1,
       }
     : value;
