@@ -28,7 +28,8 @@ import BrandMark from "./BrandMark";
 import QuietGarden from "./QuietGarden";
 import EmotionPicker from "./EmotionPicker";
 import {
-  emotionLabel,
+  emotionItems,
+  itemLabel,
   intensityBands,
   emotionSelectionSchema,
   type EmotionSelection,
@@ -252,6 +253,30 @@ export default function Chat({ config }: { config: PublicConfig }) {
         : undefined,
     [],
   );
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const root = shell.current;
+    if (!viewport || !root || !started || !matchMedia("(pointer: coarse)").matches) return;
+    let frame = 0;
+    const resize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const keyboard = window.innerHeight - viewport.height > 110 && viewport.scale === 1;
+        if (keyboard) root.style.setProperty("--chat-viewport", `${Math.round(viewport.height)}px`);
+        else root.style.removeProperty("--chat-viewport");
+        root.dataset.keyboard = keyboard ? "true" : "false";
+        if (nearBottom.current) thread.current?.scrollTo({ top: thread.current.scrollHeight });
+      });
+    };
+    viewport.addEventListener("resize", resize);
+    resize();
+    return () => {
+      cancelAnimationFrame(frame);
+      viewport.removeEventListener("resize", resize);
+      root.style.removeProperty("--chat-viewport");
+      delete root.dataset.keyboard;
+    };
+  }, [started]);
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
     if (!started || session) return;
@@ -486,7 +511,7 @@ export default function Chat({ config }: { config: PublicConfig }) {
     });
   }
   return (
-    <main ref={shell} className="app-shell">
+    <main ref={shell} data-chat-open={started ? "true" : undefined} className="app-shell">
       <header className="topbar">
         <a
           className="brand"
@@ -582,13 +607,18 @@ export default function Chat({ config }: { config: PublicConfig }) {
             <>
               <div className="current-emotion">
                 <span>
-                  {emotion ? emotionLabel(emotion) : "미정"} ·{" "}
-                  {emotion?.intensityPercent !== undefined
-                    ? `${emotion.intensityPercent}%`
-                    : emotion?.intensityBand === "unknown"
-                      ? "강도 미정"
-                      : intensityBands.find((b) => b.id === emotion?.intensityBand)?.shortLabel ||
-                        "강도 미정"}
+                  {emotion
+                    ? emotionItems(emotion)
+                        .map((item) => {
+                          const strength =
+                            item.intensityPercent === undefined
+                              ? intensityBands.find((band) => band.id === item.intensityBand)
+                                  ?.shortLabel
+                              : `${item.intensityPercent}%`;
+                          return [itemLabel(item), strength].filter(Boolean).join(" ");
+                        })
+                        .join(" · ")
+                    : "미정"}
                 </span>
                 <button onClick={() => setPanel("emotion")}>바꾸기</button>
                 {surveyAvailable && !surveyInvite && !help && (
@@ -740,63 +770,6 @@ export default function Chat({ config }: { config: PublicConfig }) {
                     </div>
                   </div>
                 )}
-                {history.length > 0 &&
-                  !complete &&
-                  !help &&
-                  !pending &&
-                  !sessionInvalid &&
-                  !continueRef.current && (
-                    <div className="reflection-options" aria-label="대화 진행 선택">
-                      {exploration?.offerRecord && (
-                        <p role="status">
-                          오늘 이야기에서 중요한 마음을 조금 발견한 것 같아요. 조금 더 이야기할까요,
-                          아니면 지금까지의 마음을 기록으로 남길까요?
-                        </p>
-                      )}
-                      <div className="reflection-buttons">
-                        {!conversationLimit &&
-                          (exploration?.offerRecord ? (
-                            <button
-                              type="button"
-                              className="secondary"
-                              onClick={() => choose("more")}
-                            >
-                              조금 더 이야기하기
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="secondary"
-                              onClick={() => choose("explore")}
-                            >
-                              마음 더 들여다보기
-                            </button>
-                          ))}
-                        {!conversationLimit && exploration?.nextQuestion && (
-                          <>
-                            <button type="button" onClick={() => choose("skip")}>
-                              다른 질문으로 넘어가기
-                            </button>
-                            <button type="button" onClick={() => choose("unsure")}>
-                              잘 모르겠어요
-                            </button>
-                          </>
-                        )}
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => choose("record")}
-                        >
-                          마음 기록 완성하기
-                        </button>
-                        {!conversationLimit && (
-                          <button type="button" onClick={() => choose("end")}>
-                            오늘은 여기까지
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 {complete && !help && (
                   <button
                     className="continue-chat secondary"
@@ -836,6 +809,40 @@ export default function Chat({ config }: { config: PublicConfig }) {
                 </button>
               )}
               <footer className="composer" hidden={complete}>
+                {history.length > 0 && !help && !sessionInvalid && !continueRef.current && (
+                  <div className="chat-controls" aria-label="대화 진행 선택">
+                    {!conversationLimit && (
+                      <div className="chat-control-row">
+                        {(
+                          [
+                            { id: "unsure", label: "잘 모르겠어요" },
+                            { id: "explore", label: "더 깊게 물어봐 줘" },
+                            { id: "skip", label: "다른 질문 해줘" },
+                          ] as const
+                        ).map(({ id, label }) => (
+                          <button
+                            key={id}
+                            type="button"
+                            disabled={status === "waiting" || Boolean(receipt.current)}
+                            onClick={() => choose(id)}
+                          >
+                            <span>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p>질문은 계속 이어져요 · 충분할 때 언제든 눌러 정리하세요</p>
+                    <button
+                      className="chat-record-button"
+                      type="button"
+                      disabled={status === "waiting" || Boolean(receipt.current)}
+                      onClick={() => choose("record")}
+                    >
+                      ✨ 여기까지 나눈 마음 정리받기
+                    </button>
+                  </div>
+                )}
+
                 <form
                   autoComplete="off"
                   onSubmit={(e) => {

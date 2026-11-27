@@ -1,3 +1,5 @@
+import { GUIDED_HISTORY_MESSAGES } from "@/lib/config";
+import { responsePlan } from "@/lib/conversation";
 import { selectionForClient } from "@/lib/emotions";
 import { NextRequest } from "next/server";
 import { chatSchema, MAX_HISTORY_MESSAGES } from "@/lib/server/schemas";
@@ -14,13 +16,14 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   const arrived = performance.now();
   try {
-    const raw = await readJson(req, 128000);
+    const raw = await readJson(req, 360000);
     if (
       raw &&
       typeof raw === "object" &&
       "history" in raw &&
       Array.isArray(raw.history) &&
-      raw.history.length >= MAX_HISTORY_MESSAGES
+      raw.history.length >=
+        ("guided" in raw && raw.guided === true ? GUIDED_HISTORY_MESSAGES : MAX_HISTORY_MESSAGES)
     )
       throw new AppError(
         409,
@@ -37,12 +40,14 @@ export async function POST(req: NextRequest) {
       throw new AppError(413, "INPUT_LENGTH", `한 번에 ${c.input}자까지 보낼 수 있어요.`);
     const length = p.history.reduce((n, m) => n + m.content.length, 0) + p.message.length;
     const reserveRecord =
-      p.guided && (p.action === "summary" || p.control === "record" || p.control === "end");
+      p.guided &&
+      responsePlan({ turns: 0, questions: 0, completed: false }, p.action, p.message, p.history)
+        .forceComplete;
     if (
-      length > (p.guided ? 32000 : c.history) ||
+      length > (p.guided ? 60000 : c.history) ||
       (p.guided &&
         !reserveRecord &&
-        (p.history.length >= MAX_HISTORY_MESSAGES - 2 || length > 28500))
+        (p.history.length >= GUIDED_HISTORY_MESSAGES - 2 || length > 56000))
     )
       throw new AppError(
         409,
@@ -95,6 +100,7 @@ export async function POST(req: NextRequest) {
                 action: p.action,
                 emotion: p.emotion,
                 guided: p.guided,
+                sessionUsage: p.guided,
                 control: p.control,
               },
               new Gate(new DatabaseStore(), c),
@@ -127,10 +133,11 @@ export async function POST(req: NextRequest) {
               questions: result.progress.questions,
               emotion: selectionForClient(result.emotion, raw?.emotion?.intensityBand),
               conversationLimit:
-                result.history.length >= MAX_HISTORY_MESSAGES - (p.guided ? 2 : 0) ||
+                result.history.length >=
+                  (p.guided ? GUIDED_HISTORY_MESSAGES - 2 : MAX_HISTORY_MESSAGES) ||
                 Boolean(
                   p.guided &&
-                  result.history.reduce((total, item) => total + item.content.length, 0) > 27000,
+                  result.history.reduce((total, item) => total + item.content.length, 0) > 54500,
                 ),
               timing: {
                 promptVersion: PROMPT_VERSION,

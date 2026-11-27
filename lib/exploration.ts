@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GUIDED_HISTORY_MESSAGES } from "./config";
 
 export const stages = [
   "CONTEXT_EXPLORATION",
@@ -65,7 +66,7 @@ export type Observation = z.infer<typeof observationSchema>;
 
 // Token claims contain pointers only. A pointer can be resolved only against the signed history.
 const pointer = z.tuple([
-  z.number().int().min(0).max(80),
+  z.number().int().min(0).max(GUIDED_HISTORY_MESSAGES),
   z.number().int().min(0).max(4000),
   z.number().int().min(1).max(160),
 ]);
@@ -73,7 +74,7 @@ export type EvidencePointer = z.infer<typeof pointer>;
 export const explorationSchema = z
   .object({
     stage: stageSchema,
-    start: z.number().int().min(0).max(80),
+    start: z.number().int().min(0).max(GUIDED_HISTORY_MESSAGES),
     situation: pointer.optional(),
     emotions: z.array(pointer).max(3).optional(),
     thought: pointer.optional(),

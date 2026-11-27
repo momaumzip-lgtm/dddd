@@ -49,6 +49,41 @@ export class Gate {
         rid,
       ]),
     );
+    return this.receipt(keys, sid, cid, rid, this.cap.global);
+  }
+  async enterGuided(sid: string, cid: string, rid: string, revision: number, record: boolean) {
+    const keys = this.keys(sid, cid, rid);
+    const admission = await this.store.eval(
+      "guided_admit",
+      [
+        keys[0],
+        keys[1],
+        keys[5],
+        `{maeum}:guided:session:${sid}:${cid}`,
+        keys[2].replace(":minute:", ":guided:minute:"),
+        keys[3].replace(":day:", ":guided:day:"),
+      ],
+      [String(this.cap.minute), String(this.cap.day), String(revision), rid],
+    );
+    if (admission === 1)
+      throw new AppError(
+        429,
+        "SESSION_LIMIT",
+        "새 대화를 지금은 더 시작하기 어려워요. 잠시 후 다시 시도해 주세요.",
+      );
+    this.check(admission);
+    const reserve = Math.min(60, Math.max(6, Math.ceil(this.cap.global * 0.15)));
+    const ceiling = record ? this.cap.global : Math.max(1, this.cap.global - reserve);
+    return this.receipt(keys, sid, cid, rid, ceiling, true);
+  }
+  private receipt(
+    keys: string[],
+    sid: string,
+    cid: string,
+    rid: string,
+    ceiling: number,
+    guided = false,
+  ) {
     return {
       stage: async (next: number) =>
         this.check(
@@ -58,10 +93,16 @@ export class Gate {
             [rid, String(next)],
           ),
         ),
-      extra: async () =>
-        this.check(
-          await this.store.eval(EXTRA, [keys[1], keys[4]], [rid, String(this.cap.global)]),
-        ),
+      extra: async () => {
+        const code = await this.store.eval(EXTRA, [keys[1], keys[4]], [rid, String(ceiling)]);
+        if (guided && code === 1)
+          throw new AppError(
+            429,
+            "CHAT_BUDGET",
+            "지금은 새 답변을 만들기 어려워요. 잠시 후 다시 요청하거나 지금까지 나눈 마음을 정리할 수 있어요.",
+          );
+        this.check(code);
+      },
       finish: async (next?: number) =>
         this.check(
           await this.store.eval(

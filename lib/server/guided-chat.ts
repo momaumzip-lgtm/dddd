@@ -4,6 +4,8 @@ import type { responsePlan } from "../conversation";
 import {
   emotionCatalog,
   emotionLabel,
+  emotionItems,
+  itemLabel,
   selectionContext,
   unknownEmotion,
   type EmotionSelection,
@@ -56,6 +58,19 @@ const pacingDirections: Record<ReturnType<typeof selectionContext>["pace"], stri
 };
 
 const compact = (text: string) => text.replace(/[\s.?!？！。,…'’‘“”]/g, "");
+const futureCareQuestion = (text: string) =>
+  /비슷한|다음(?:에|번)|앞으로/.test(text) &&
+  /어떻게|무엇|뭘|뭐/.test(text) &&
+  /챙기|해보고|해 보고|해주고|해 주고|돌보|하고 싶/.test(text);
+const questionFocus = (text: string) => {
+  const phrase = compact(text);
+  if (/생각.{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각/.test(phrase)) return "thought";
+  if (/뭐라고.{0,5}했|어떻게.{0,8}(?:행동|하셨어요)|실제로.{0,5}(?:하셨|했어)/.test(phrase))
+    return "reaction";
+  if (/바랐|원했|듣고싶|해줬으면/.test(phrase)) return "wish";
+  if (/느낌|어떤마음|어떤감정/.test(phrase)) return "feeling";
+  return null;
+};
 const lastQuestion = (text: string) =>
   [...sentenceBoundaries.segment(text)]
     .map(({ segment }) => segment.trim())
@@ -107,6 +122,15 @@ function evidenceFor(state: Exploration, messages: Message[], emotion: EmotionSe
       (state.start > 0 && !state.initialEmotionId && state.selectionVersion === emotion.version)
         ? ""
         : emotionLabel(emotion),
+    selectedEmotions:
+      state.start === 0 || state.selectionVersion !== emotion.version || state.initialEmotionId
+        ? emotionItems(emotion)
+            .filter((item) => item.emotionId !== "unknown")
+            .map((item) => ({
+              label: itemLabel(item),
+              intensity: item.intensityPercent ?? item.intensityBand,
+            }))
+        : [],
     expressedEmotions: (state.emotions || []).map((ref) => quote(messages, ref)).filter(Boolean),
     thought: quote(messages, state.thought),
     meaning: quote(messages, state.meaning),
@@ -260,6 +284,8 @@ export async function runGuidedTurn({
   const before = evidenceFor(state, messages, emotion);
   const wantsRecord = plan.forceComplete || control === "record" || control === "end";
   const movesOn = control === "skip" || control === "unsure";
+  const budgetExhausted = (error: unknown) =>
+    error instanceof AppError && error.code === "CHAT_BUDGET";
   const lightlyDisappointed =
     plan.briefDisappointment && /그냥|조금|좀|살짝|약간/.test(currentText);
   const gentleFollowup =
@@ -279,7 +305,7 @@ export async function runGuidedTurn({
     try {
       observation = await ai.reviewExploration(recent, before);
     } catch (error) {
-      if (!repairable(error)) throw error;
+      if (!repairable(error) && !(wantsRecord && budgetExhausted(error))) throw error;
     }
   }
   const incoming = observation?.situation
@@ -350,7 +376,8 @@ export async function runGuidedTurn({
   }
   if (state.pending && (control === "skip" || control === "unsure" || uncertain.test(currentText)))
     state.pending = undefined;
-  if (movesOn) state.skipped = [...new Set([...(state.skipped || []), state.stage])].slice(-8);
+  if (control === "skip")
+    state.skipped = [...new Set([...(state.skipped || []), state.stage])].slice(-8);
   if (control === "more" || continueRequest.test(currentText)) state.deferred = true;
   const evidence = evidenceFor(state, evidenceMessages, emotion);
   const basis = observation?.needBasis
@@ -365,7 +392,12 @@ export async function runGuidedTurn({
     !evidence.rejected.some((text) => compact(text).includes(compact(observation.need)))
       ? observation.need
       : "";
+  const previousStage = state.stage;
   state.stage = nextStage(state, evidence, candidate);
+  if (control === "skip" && state.stage === previousStage && evidence.situation)
+    state.stage = evidence.confirmedNeeds.length ? "REFLECTION" : "UNDERLYING_NEED";
+  if (control === "explore" && evidence.situation && state.stage === "EMOTION_IDENTIFICATION")
+    state.stage = "AUTOMATIC_THOUGHT";
 
   if (wantsRecord) {
     const ready = isReady(evidence);
@@ -387,8 +419,24 @@ export async function runGuidedTurn({
       try {
         record = await ai.generateMindRecord(recent, evidence, attempt > 0);
       } catch (error) {
+        if (budgetExhausted(error)) break;
         if (!repairable(error)) throw error;
         continue;
+      }
+      const custom = emotionItems(emotion)
+        .filter(
+          (item) =>
+            item.emotionId === "custom" &&
+            evidence.selectedEmotions.some(({ label }) => label === item.customLabel) &&
+            !record.emotions.includes(item.customLabel),
+        )
+        .map((item) => item.customLabel);
+      if (custom.length) {
+        const picked = `직접 고른 감정은 ${custom.map((label) => `‘${label}’`).join(", ")}예요.`;
+        record.emotions =
+          record.emotions && picked.length + record.emotions.length < 239
+            ? `${picked} ${record.emotions}`
+            : picked;
       }
       if (!evidence.confirmedNeeds.length) record.needs = [];
       if (!evidence.thought && !evidence.meaning && !evidence.insight) record.connection = "";
@@ -399,7 +447,7 @@ export async function runGuidedTurn({
       await slot.extra();
       const [reviewed, unsafe] = await Promise.all([
         ai.reviewMindRecord(recent, evidence, record).catch((error) => {
-          if (!repairable(error)) throw error;
+          if (!repairable(error) && !budgetExhausted(error)) throw error;
           return false;
         }),
         ai.moderateOutputs(fields),
@@ -467,6 +515,10 @@ export async function runGuidedTurn({
     .slice(-8)
     .filter((m) => m.role === "assistant")
     .map((m) => compact(lastQuestion(m.content)));
+  const previousFocus = questionFocus(lastQuestion(history.at(-1)?.content || ""));
+  const statedPositive = evidence.expressedEmotions.some((text) =>
+    /기쁘|기쁨|신나|즐거|행복|뿌듯|설레|감격|좋았/.test(text),
+  );
   const prompt: GuidedPrompt = {
     stage: state.stage,
     evidence,
@@ -546,8 +598,11 @@ export async function runGuidedTurn({
         : lastQuestion(fields.at(-1) || "");
     if (
       proposed &&
-      (proposed.length > 180 ||
+      (proposed.length > 100 ||
         oldQuestions.includes(compact(proposed)) ||
+        (control === "skip" && previousFocus && previousFocus === questionFocus(proposed)) ||
+        (!statedPositive && /특히 좋았|좋으셨|기쁘셨|뿌듯하셨|행복하셨/.test(proposed)) ||
+        (futureCareQuestion(proposed) && oldQuestions.slice(-2).some(futureCareQuestion)) ||
         !selectSentences(proposed, true, false, new Set()).asked)
     )
       continue;
@@ -556,6 +611,7 @@ export async function runGuidedTurn({
       ? plain
       : [...sentenceBoundaries.segment(plain)][0]?.segment.trim();
     const sentences = [reflection, proposed].filter(Boolean);
+    if (!plan.asksForPracticalHelp && sentences.join(" ").length > 200) continue;
     if (!sentences.length || (!needsNoQuestions && !plan.asksForPracticalHelp && !proposed))
       continue;
     const checked: StreamReply = { ...raw, sentences };
@@ -575,6 +631,10 @@ export async function runGuidedTurn({
     } catch (error) {
       if (!(error instanceof AppError) || error.code !== "ATTRIBUTION") throw error;
     }
+  }
+  if (!body && control === "skip" && evidence.situation && previousFocus === "thought") {
+    body = "그 일이 있고 나서 바로 어떻게 하셨어요?";
+    question = body;
   }
   if (!body && paceCheck) {
     body = `편하신 속도로 이야기해도 괜찮아요. ${paceQuestion}`;

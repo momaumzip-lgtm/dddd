@@ -2,8 +2,8 @@ import { z } from "zod";
 import { explorationSchema } from "./exploration";
 export const progressSchema = z
   .object({
-    turns: z.number().int().min(0).max(40),
-    questions: z.number().int().min(0).max(40),
+    turns: z.number().int().min(0).max(50),
+    questions: z.number().int().min(0).max(50),
     completed: z.boolean(),
     messageIds: z.array(z.string().uuid()).max(40).optional(),
     exploration: explorationSchema.optional(),

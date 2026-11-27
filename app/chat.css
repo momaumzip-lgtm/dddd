@@ -1885,30 +1885,130 @@ dialog .fine-print {
     display: none;
   }
 }
-.reflection-options {
-  display: grid;
-  gap: 10px;
-  margin: 12px 0 20px;
-}
-.reflection-options > p {
-  padding: 12px 14px;
-  margin: 0;
-  border-radius: 12px;
-  background: var(--soft, #edf2e8);
-  line-height: 1.6;
-}
-.reflection-buttons,
 .record-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
-.reflection-buttons button,
 .record-actions button {
   min-height: 44px;
   padding: 7px 12px;
-  border: 1px solid var(--line, #d6dfd2);
+  border: 1px solid var(--line);
   border-radius: 10px;
+}
+.emotion-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.emotion-entry input {
+  min-width: 0;
+  width: 100%;
+  min-height: 46px;
+  padding: 8px 10px;
+  font-size: 16px;
+}
+.emotion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  list-style: none;
+  gap: 6px;
+  padding: 0;
+  margin: 8px 0;
+}
+.emotion-chips li {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding-left: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.emotion-chips button {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 44px;
+}
+.emotion-strength-tabs {
+  flex-wrap: wrap;
+}
+.emotion-strength-tabs button {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.chat-controls {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 8px;
+}
+.chat-control-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.chat-control-row button {
+  min-width: 0;
+  padding: 2px 0;
+  min-height: 44px;
+}
+.chat-control-row span {
+  display: grid;
+  min-height: 38px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper, #fff);
+  font-size: 13px;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+.chat-controls > p {
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.chat-record-button {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 11px;
+  background: #dbe7d7;
+  color: #213b2c;
+  font-size: 15px;
+  font-weight: 600;
+}
+.chat-record-button:not(:disabled):hover {
+  background: #cddfc7;
+}
+@media (max-width: 600px) {
+  .composer textarea {
+    font-size: 16px;
+  }
+  .app-shell[data-chat-open="true"] {
+    min-height: 0;
+    height: var(--chat-viewport, 100dvh);
+  }
+  .app-shell[data-keyboard="true"] .page-footer {
+    display: none;
+  }
+  .app-shell[data-keyboard="true"] .chat-controls {
+    gap: 2px;
+    padding-bottom: 4px;
+  }
+  .app-shell[data-keyboard="true"] .composer {
+    padding-bottom: 4px;
+  }
+}
+@media (max-width: 350px) {
+  .chat-control-row {
+    gap: 4px;
+  }
+  .chat-control-row span {
+    font-size: 12px;
+  }
 }
 .intensity-detail {
   margin-top: 14px;

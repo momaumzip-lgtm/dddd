@@ -12,3 +12,5 @@ export type PublicConfig = {
   survey: import("./survey").SurveyConfig;
   policy: { targetAge: string; processing: string };
 };
+
+export const GUIDED_HISTORY_MESSAGES = 100;

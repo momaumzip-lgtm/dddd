@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GUIDED_HISTORY_MESSAGES } from "../config";
 import { emotionSelectionSchema, unknownEmotion } from "../emotions";
 import { controlSchema } from "../exploration";
 export const MAX_HISTORY_MESSAGES = 80;
@@ -10,7 +11,7 @@ export const chatSchema = z
     requestId: z.string().uuid(),
     conversationId: z.string().uuid(),
     token: z.string().max(4096),
-    history: z.array(messageSchema).max(MAX_HISTORY_MESSAGES),
+    history: z.array(messageSchema).max(GUIDED_HISTORY_MESSAGES),
     message: z.string().trim().min(1).max(4000),
     action: z.enum(["chat", "summary", "continue"]).default("chat"),
     messageId: z.string().uuid().optional(),

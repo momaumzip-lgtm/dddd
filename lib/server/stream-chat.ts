@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { Message } from "../config";
 import { DIARY_INVITATION, freshProgress, responsePlan, type Progress } from "../conversation";
-import { correctedSelection, selectionContext, type EmotionSelection } from "../emotions";
+import {
+  emotionItems,
+  correctedSelection,
+  selectionContext,
+  type EmotionSelection,
+} from "../emotions";
 import { AppError } from "./errors";
 import { hasOutputInstructions, selectSentences, sentenceBoundaries } from "./reply-text";
 import { preserveAttribution } from "./attribution";
@@ -64,6 +69,7 @@ export type StreamContext = {
   previousSafety: Safety;
 };
 export interface StreamingProvider {
+  accountResponses?(charge: () => Promise<void>): void;
   reviewExploration(messages: Message[], evidence: GuidedEvidence): Promise<Observation>;
   generateMindRecord(
     messages: Message[],
@@ -137,6 +143,7 @@ export async function runStreamingChat(
     action: string;
     emotion: EmotionSelection;
     guided?: boolean;
+    sessionUsage?: boolean;
     control?: ExplorationControl;
   },
   gate: Gate,
@@ -159,9 +166,15 @@ export async function runStreamingChat(
       "이미 반영한 메시지예요. 새 이야기를 적어 주세요.",
     );
   const started = performance.now();
-  const slot = await gate.enter(args.sid, args.cid, args.rid, args.revision);
   const emotion = correctedSelection(args.emotion, args.message),
     plan = responsePlan(args.progress, args.action, args.message, args.history);
+  const slot =
+    args.guided && args.sessionUsage
+      ? await gate.enterGuided(args.sid, args.cid, args.rid, args.revision, plan.forceComplete)
+      : await gate.enter(args.sid, args.cid, args.rid, args.revision);
+  const directAccounting = Boolean(args.guided && args.sessionUsage && ai.accountResponses);
+  if (directAccounting) ai.accountResponses?.(slot.extra);
+  const allowance = directAccounting ? { extra: async () => {} } : slot;
   const turns = plan.current.turns + (args.action === "summary" || args.control ? 0 : 1);
   const messages: Message[] = [...args.history, { role: "user", content: args.message }];
   const recordRequested = args.action === "summary" || plan.recordStory !== null;
@@ -176,7 +189,18 @@ export async function runStreamingChat(
   const userStory = recordInput
     .filter((message) => message.role === "user")
     .map((message) => message.content.replace(/\s/g, ""));
-  let safety = retainRisk(args.safety, urgent(args.message)),
+  const directEmotions = args.guided
+    ? emotionItems(emotion)
+        .filter((item) => item.emotionId === "custom")
+        .map((item) => item.customLabel)
+    : [];
+  const safetyHistory: Message[] = args.guided
+    ? [
+        ...messages.slice(-12),
+        ...directEmotions.map((content) => ({ role: "user" as const, content })),
+      ]
+    : messages;
+  let safety = retainRisk(args.safety, urgent([args.message, ...directEmotions].join("\n"))),
     body = "",
     diaryDraft: string | null = null,
     committed = false,
@@ -200,15 +224,15 @@ export async function runStreamingChat(
   try {
     if (safety === "normal" || safety === "check") {
       const checked = await ai.moderate(
-        messages
+        safetyHistory
           .filter((m) => m.role === "user")
           .map((m) => m.content)
           .join("\n"),
       );
       // Contextual safety routing remains for flagged input and unresolved checks, not every ordinary turn.
       if (checked.flagged || safety === "check") {
-        await slot.extra();
-        const route = await ai.classify(messages, checked.categories, safety);
+        await allowance.extra();
+        const route = await ai.classify(safetyHistory, checked.categories, safety);
         safety = retainRisk(
           safety,
           route.safety,
@@ -227,7 +251,7 @@ export async function runStreamingChat(
       const start = performance.now();
       const outcome = await runGuidedTurn({
         ai,
-        slot,
+        slot: allowance,
         history: args.history,
         latest: args.message,
         plan,
@@ -289,7 +313,7 @@ export async function runStreamingChat(
         reviewRequestedRecord ||
         (plan.followupQuestion && plan.current.turns === 1 && confirmedReply)
       ) {
-        await slot.extra();
+        await allowance.extra();
         const review = await ai.reviewReadiness(segment);
         const userWords = segment
           .filter((m) => m.role === "user")
@@ -644,13 +668,13 @@ export async function runStreamingChat(
             messages,
             evidence ? { ...result, diaryDraft: undefined } : result,
             async (statements, fields, diaryIndex, verify) => {
-              await slot.extra();
+              await allowance.extra();
               return ai.checkAttribution(statements, fields, diaryIndex, verify);
             },
           ),
           ai.moderateOutputs(candidates),
           evidence && draft
-            ? slot.extra().then(() => ai.reviewDiary(segment, evidence, draft))
+            ? allowance.extra().then(() => ai.reviewDiary(segment, evidence, draft))
             : ("grounded" as const),
         ]);
         let verified = evidence ? { ...attributed, diaryDraft: draft } : attributed;
@@ -695,7 +719,7 @@ export async function runStreamingChat(
           )
         )
           throw error;
-        await slot.extra();
+        await allowance.extra();
         received.length = 0;
         mode = "continue";
         result = await prepareReply(true);
@@ -795,7 +819,7 @@ export async function runStreamingChat(
       safety === "normal" &&
       (!args.guided || Boolean(explorationView?.finalRecord));
     if (diaryDraft && safety === "normal") publish("\n\n" + DIARY_INVITATION);
-    progress.messageIds = [...(args.progress.messageIds || []), messageId];
+    progress.messageIds = [...(args.progress.messageIds || []), messageId].slice(-40);
     if (!body) throw new AppError(502, "EMPTY", "답변을 완성하지 못했어요.");
     await slot.stage(args.revision + 1);
     committed = true;

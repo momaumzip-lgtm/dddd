@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GUIDED_HISTORY_MESSAGES } from "../config";
 import { emotionSelectionSchema } from "../emotions";
 import { controlSchema, explorationViewSchema, mindRecordSchema } from "../exploration";
 import { completedChatSchema } from "./chat-stream";
@@ -18,7 +19,7 @@ export const pendingSchema = z.object({
 });
 const history = z
   .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) }))
-  .max(80);
+  .max(GUIDED_HISTORY_MESSAGES);
 export const tabChatSchema = z.object({
   session: browserSessionSchema.nullable(),
   history,
@@ -58,7 +59,7 @@ export function forgetTab(key: string) {
 export function readTab<T>(key: string, schema: z.ZodType<T>): T | undefined {
   try {
     const value = sessionStorage.getItem(key);
-    if (!value || value.length > 220000) return;
+    if (!value || value.length > 450000) return;
     const envelope = z.object({ savedAt: z.number(), data: schema }).safeParse(JSON.parse(value));
     if (envelope.success && Date.now() - envelope.data.savedAt < expiry) return envelope.data.data;
     forgetTab(key);

@@ -162,7 +162,10 @@ export const intensityBandSchema = z.union([
   currentBands,
   legacyBandSchema.transform((band) => legacyBands[band]),
 ]);
-export const emotionSelectionSchema = z
+export const MAX_SELECTED_EMOTIONS = 5;
+export const normalizeEmotion = (value: string) =>
+  value.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
+const emotionItemSchema = z
   .object({
     emotionId: z
       .string()
@@ -172,12 +175,51 @@ export const emotionSelectionSchema = z
     customLabel: z.string().trim().max(40).default(""),
     intensityBand: intensityBandSchema,
     intensityPercent: z.number().int().min(0).max(100).optional(),
-    version: z.number().int().min(0).max(10000),
   })
-  .strict()
-  .refine((e) => e.emotionId !== "custom" || e.customLabel.length > 0)
-  .transform((e) => (e.emotionId === "custom" ? e : { ...e, customLabel: "" }));
-export type EmotionSelection = z.infer<typeof emotionSelectionSchema>;
+  .strict();
+const isValidItem = (item: z.infer<typeof emotionItemSchema>) =>
+  item.emotionId !== "custom" || item.customLabel.length > 0;
+export type EmotionItem = z.infer<typeof emotionItemSchema>;
+export const emotionSelectionSchema = emotionItemSchema
+  .extend({
+    version: z.number().int().min(0).max(10000),
+    items: z
+      .array(emotionItemSchema.refine(isValidItem))
+      .min(1)
+      .max(MAX_SELECTED_EMOTIONS)
+      .optional(),
+  })
+  .refine(isValidItem)
+  .refine(
+    ({ items }) =>
+      !items ||
+      (new Set(items.map((item) => normalizeEmotion(itemLabel(item)))).size === items.length &&
+        (items.length === 1 || items.every((item) => item.emotionId !== "unknown"))),
+  )
+  .transform(({ items, ...value }) => {
+    if (items) return makeEmotionSelection(items, value.version);
+    return value.emotionId === "custom" ? value : { ...value, customLabel: "" };
+  });
+export type EmotionSelection = EmotionItem & { version: number; items?: EmotionItem[] };
+export function itemLabel(value: EmotionItem) {
+  return value.emotionId === "custom"
+    ? value.customLabel
+    : emotionCatalog.find((e) => e.id === value.emotionId)?.label || "잘 모르겠어요";
+}
+export function makeEmotionSelection(items: EmotionItem[], version: number): EmotionSelection {
+  const ranking = { unknown: 0, low: 1, medium: 2, high: 3, veryHigh: 4 };
+  const primary = items.reduce((best, item) =>
+    ranking[paceFor(item.intensityPercent, item.intensityBand)] >
+    ranking[paceFor(best.intensityPercent, best.intensityBand)]
+      ? item
+      : best,
+  );
+  return { ...primary, items, version };
+}
+export function emotionItems(value: EmotionSelection): EmotionItem[] {
+  const { items, version: _version, ...primary } = value;
+  return items ?? [primary];
+}
 // An older open tab validates the reply against the same scale it sent.
 export function selectionForClient(selection: EmotionSelection, requestedBand: unknown) {
   const previous = legacyBandSchema.safeParse(requestedBand);
@@ -192,9 +234,7 @@ export const unknownEmotion: EmotionSelection = {
   version: 0,
 };
 export function emotionLabel(value: EmotionSelection) {
-  return value.emotionId === "custom"
-    ? value.customLabel
-    : emotionCatalog.find((e) => e.id === value.emotionId)?.label || "잘 모르겠어요";
+  return emotionItems(value).map(itemLabel).join(" · ");
 }
 export function paceFor(percent?: number, band: EmotionSelection["intensityBand"] = "unknown") {
   if (percent === undefined) return band;
@@ -206,7 +246,7 @@ export function selectionContext(value: EmotionSelection) {
   return {
     emotionId: value.emotionId,
     version: value.version,
-    emotion: emotionLabel(value),
+    emotion: itemLabel(value),
     category: entry?.category || "unknown",
     intensityBand: value.intensityBand,
     pace,
@@ -231,16 +271,16 @@ export function selectionContext(value: EmotionSelection) {
     }[pace],
   };
 }
-const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
 export function searchEmotions(query: string, category = "all") {
-  const q = normalize(query);
+  const q = normalizeEmotion(query);
   return emotionCatalog.filter(
     (e) =>
       (!q ? category === "all" || e.category === category : true) &&
-      [e.label, ...e.aliases].some((s) => normalize(s).includes(q)),
+      [e.label, ...e.aliases].some((s) => normalizeEmotion(s).includes(q)),
   );
 }
 export function correctedSelection(value: EmotionSelection, message: string): EmotionSelection {
+  if (value.items) return value;
   // A contrast about the event (rather than the feeling) must not change the picker.
   const contrasts = message
     .split(/아니라|아니고|보다는/)

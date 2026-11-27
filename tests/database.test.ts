@@ -30,11 +30,19 @@ async function fixture() {
       "utf8",
     ),
   );
+  await db.exec(
+    await readFile(
+      new URL("../netlify/database/migrations/202611270001_guided_admission.sql", import.meta.url),
+      "utf8",
+    ),
+  );
   const store: Store = {
     async eval(op, keys, args) {
       const { rows } = await db.query<{ code: number }>(
-        "SELECT maumzip_gate($1, $2::text[], $3::text[]) AS code",
-        [op, keys, args],
+        op === "guided_admit"
+          ? "SELECT maumzip_guided_admit($1::text[], $2::text[]) AS code"
+          : "SELECT maumzip_gate($1, $2::text[], $3::text[]) AS code",
+        op === "guided_admit" ? [keys, args] : [op, keys, args],
       );
       return rows[0].code;
     },
@@ -155,6 +163,43 @@ test("SQL receipt staging, idempotent acknowledgement and stale receipt race pre
     const unknown = await gate.enter("other", "other", "r4", 0);
     await assert.rejects(gate.acknowledge("other", "other", "r4", 1));
     await unknown.finish();
+  } finally {
+    await db.close();
+  }
+});
+
+test("same-minute guided dialogue passes 30 replies, rejects duplicates, and keeps record budget", async () => {
+  const { db, store } = await fixture();
+  try {
+    const gate = new Gate(store, { minute: 1, day: 1, global: 50 });
+    const legacy = await gate.enter("old", "c", "r1", 0);
+    await legacy.finish(1);
+    await assert.rejects(gate.enter("old", "c", "r2", 1), { code: "LIMIT" });
+    for (let i = 0; i < 31; i++) {
+      const rid = `chat-${i}`;
+      const slot = await gate.enterGuided("new", "c", rid, i, false);
+      if (!i) {
+        await assert.rejects(gate.enterGuided("new", "c", rid, i, false), { code: "DUPLICATE" });
+        await assert.rejects(gate.enterGuided("new", "c", "double-click", i, false), {
+          code: "BUSY",
+        });
+      }
+      await slot.extra();
+      await slot.stage(i + 1);
+      await gate.acknowledge("new", "c", rid, i + 1);
+    }
+    await assert.rejects(gate.enterGuided("new", "next", "new-visit", 0, false), {
+      code: "SESSION_LIMIT",
+    });
+    const rush = await gate.enterGuided("new", "c", "later", 31, false);
+    for (let i = 0; i < 10; i++) await rush.extra();
+    await assert.rejects(rush.extra(), { code: "CHAT_BUDGET" });
+    await rush.finish();
+    const record = await gate.enterGuided("new", "c", "record", 31, true);
+    await record.extra();
+    await record.stage(32);
+    await gate.acknowledge("new", "c", "record", 32);
+    await assert.rejects(gate.enterGuided("new", "c", "old", 31, true), { code: "STALE" });
   } finally {
     await db.close();
   }
