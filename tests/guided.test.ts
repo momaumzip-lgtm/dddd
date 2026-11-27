@@ -578,3 +578,114 @@ test("a question about the user’s actions cannot come back as a question about
   assert.equal(attempts, 2);
   assert.equal(result.explorationView?.nextQuestion, "그때 친구에게 어떤 태도를 바라셨나요?");
 });
+
+test("a wish to be heard leads to the user's own reason and is asked once", async () => {
+  const ai = provider();
+  const history: Message[] = [
+    { role: "user", content: "친구가 제 말을 중간에 끊었어요." },
+    { role: "assistant", content: "그때 친구에게 어떤 행동을 바라셨나요?" },
+  ];
+  const wish = "답을 듣기보다 끝까지 들어주길 바랐어요.";
+  const ownReason = "제 의견도 중요하게 여겨진다고 느꼈을 것 같아요.";
+  const gate = new Gate(new LuaStore(), cap);
+  const sid = id();
+  const cid = id();
+  ai.reviewExploration = async (messages) => ({
+    ...blank,
+    situation: history[0].content,
+    wish,
+    confirmedNeed: messages.at(-1)?.content === ownReason ? ownReason : "",
+  });
+  ai.streamReply = async () => assert.fail("the direct wish has a grounded question");
+  const firstRid = id();
+  const first = await runStreamingChat(
+    {
+      sid,
+      cid,
+      rid: firstRid,
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: { ...freshProgress, turns: 1 },
+      emotion: unknownEmotion,
+      history,
+      message: wish,
+    },
+    gate,
+    ai,
+    () => {},
+  );
+  assert.equal(
+    first.explorationView?.nextQuestion,
+    "끝까지 들어줬다면 그때 마음이 어떻게 달라졌을 것 같아요?",
+  );
+  await gate.acknowledge(sid, cid, firstRid, first.revision);
+  let attempts = 0;
+  ai.streamReply = async () => ({
+    mode: "continue",
+    safety: "normal",
+    sentences: [
+      ++attempts === 1
+        ? "끝까지 들어줬다면 그때 기분이 좀 달라졌을까요?"
+        : "그 일을 돌아보니 지금 친구와의 대화에서 새롭게 보이는 점이 있나요?",
+    ],
+  });
+  const next = await runStreamingChat(
+    {
+      sid,
+      cid,
+      rid: id(),
+      revision: first.revision,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: first.progress,
+      emotion: unknownEmotion,
+      history: first.history,
+      message: ownReason,
+    },
+    gate,
+    ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.match(next.explorationView?.nextQuestion || "", /새롭게 보이는 점/);
+});
+
+test("a reflection question about the other person's feelings is rejected before display", async () => {
+  const ai = provider();
+  let attempts = 0;
+  ai.streamReply = async () => ({
+    mode: "continue",
+    safety: "normal",
+    sentences: [
+      ++attempts === 1
+        ? "그렇게 들어주는 일이 친구에게 어떤 의미로 느껴졌을까요?"
+        : "그 말을 들었다면 마음이 조금 편해졌을 것 같아요?",
+    ],
+  });
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: { ...freshProgress, turns: 1 },
+      emotion: unknownEmotion,
+      history: [
+        { role: "user", content: "친구가 제 말을 중간에 끊었어요." },
+        { role: "assistant", content: "그때 친구에게 어떤 행동을 바라셨나요?" },
+      ],
+      message: "미안하다고 했으면 좋았겠어요.",
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.match(result.explorationView?.nextQuestion || "", /마음이 조금 편해졌을/);
+});

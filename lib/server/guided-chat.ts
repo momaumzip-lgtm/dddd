@@ -36,7 +36,7 @@ export const explorationDirections: Record<ConversationStage, string> = {
   PERSONAL_MEANING:
     "그 일이 사용자에게 어떤 신호처럼 느껴졌는지를 실제 말이나 행동에 붙여 묻습니다. 단순히 왜 중요했냐고 되묻지 않습니다. 예를 들어 의견을 지나쳤다는 말을 들었다면 결정 내용과 말을 들을 기회 중 어느 쪽이 마음에 남았는지 살필 수 있습니다. 장면에 없는 대안을 만들어내지 않습니다.",
   UNDERLYING_NEED:
-    "사용자가 말한 바람이 나왔다면 실제로 달랐으면 하는 행동을 다시 묻지 않습니다. 그 바람이 채워졌을 때 사용자 자신이나 관계가 어떻게 다르게 느껴졌을지 한 가지 좁혀 묻습니다. 사실과 확인되지 않은 욕구를 나눕니다.",
+    "사용자가 말한 바람이 나왔다면 실제로 달랐으면 하는 행동을 다시 묻지 않습니다. 그 바람이 채워졌을 때 사용자의 마음이 어떻게 달라졌을지를 그 장면에 붙여 묻습니다. 상대의 속마음이나 상대에게 어떤 의미였을지는 묻지 않습니다. 사실과 확인되지 않은 욕구를 나눕니다.",
   NEED_VALIDATION:
     "제공된 잠정적인 욕구 한 가지만 검토합니다. 핵심 표현을 그대로 넣고 짧게 맞는지 여쭙습니다. 그 표현이 가까운지는 사용자가 결정합니다.",
   REFRAMING:
@@ -98,12 +98,19 @@ const focusLabels = {
   thought: "그 순간 스친 생각이나 해석",
   reaction: "그 자리에서 실제로 한 행동",
   wish: "상대에게 바랐던 말, 태도나 행동",
+  wishImpact: "그 바람이 이루어졌을 때 내 마음에 달라질 점",
   feeling: "그 순간의 감정",
   futureCare: "다음에 비슷한 일이 있을 때 자신을 돌보는 방법",
 } as const;
 const questionFocus = (text: string): keyof typeof focusLabels | null => {
   const phrase = compact(text);
   if (futureCareQuestion(phrase)) return "futureCare";
+  if (
+    /(?:바람|바랐던일|들어줬다면|그렇게해줬다면|그말을들었다면).{0,26}(?:달라졌|달랐|달라질|어떤의미|왜중요|중요했던|마음이어땠)/.test(
+      phrase,
+    )
+  )
+    return "wishImpact";
   if (
     /(?:생각|어떤말).{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각|어떤(?:뜻|의미|신호)처럼|(?:뜻|신호|의미)처럼느껴|어떻게대하.{0,12}처럼느껴/.test(
       phrase,
@@ -129,6 +136,11 @@ const questionFocus = (text: string): keyof typeof focusLabels | null => {
   if (/느낌|어떤마음|어떤감정/.test(phrase)) return "feeling";
   return null;
 };
+const otherPerspectiveQuestion = (question: string) =>
+  /(?:친구|상대(?:방)?|동료|그사람)(?:에게|한테)(?:는)?.{0,8}(?:어떤|무슨)(?:뜻|의미|느낌|마음|기분).{0,10}(?:느꼈|느껴|들었|이었|였을)|(?:친구|상대(?:방)?|동료|그사람)(?:는|도).{0,6}(?:어떻게느꼈|기분이어땠)/.test(
+    compact(question),
+  );
+const listeningWishQuestion = "끝까지 들어줬다면 그때 마음이 어떻게 달라졌을 것 같아요?";
 const openingRiskCue =
   /죽|자살|자해|다치|해치|폭력|때리|때렸|맞았|칼|총|약물|살려|살기\s*싫|사라지고\s*싶|버티기\s*힘|끝내고\s*싶|안전하지|피가\s*나/;
 const positiveWords = /기쁘|기뻤|기쁨|신나|즐거|행복|뿌듯|설레|감격/;
@@ -632,6 +644,8 @@ export async function runGuidedTurn({
   }
   if (evidence.thought) avoid.add("thought");
   if (evidence.wish) avoid.add("wish");
+  const answeredWishImpact = Boolean(evidence.wish && evidence.confirmedNeeds.length);
+  if (answeredWishImpact) avoid.add("wishImpact");
   const repeatsQuestion = (question: string) => {
     if (!question) return false;
     const currentFocus = questionFocus(question);
@@ -640,6 +654,33 @@ export async function runGuidedTurn({
       Boolean(currentFocus && avoid.has(currentFocus))
     );
   };
+  const askListeningWishImpact =
+    !openingPace &&
+    inputUnflagged &&
+    !control &&
+    !needsNoQuestions &&
+    !plan.clarifyQuestion &&
+    !plan.asksForPracticalHelp &&
+    !openingRiskCue.test(currentText) &&
+    !answeredWishImpact &&
+    state.wish?.[0] === index &&
+    /(?:끝까지|(?:내|제)말을?다).{0,10}(?:들어줬으면|들어주길)/.test(compact(evidence.wish)) &&
+    !/(?:바랐|원했|좋겠)대|라고\s*(?:하|했)/.test(currentText) &&
+    !/중요|때문|그래야|그래서|무시당|존중받|인정받|안심|편해|바란\s*건\s*아니|바라지\s*않/.test(
+      currentText,
+    ) &&
+    !repeatsQuestion(listeningWishQuestion);
+  if (askListeningWishImpact) {
+    return {
+      body: listeningWishQuestion,
+      state,
+      view: viewFor(state, evidence, emotion, turns, listeningWishQuestion, null, null),
+      safety: "normal" as Safety,
+      questions: 1,
+    };
+  }
+  const losesPerspective = (question: string) =>
+    !plan.asksForPracticalHelp && otherPerspectiveQuestion(question);
   const focus = openingPace
     ? openingEmotionFocus(emotionContext.emotion, positiveOpening)
     : undefined;
@@ -758,6 +799,7 @@ export async function runGuidedTurn({
       proposed &&
       (proposed.length > 100 ||
         repeated ||
+        losesPerspective(proposed) ||
         (closeToHurt &&
           (questionFocus(proposed) === "thought" || /어떤\s*(?:뜻|의미)처럼/.test(proposed))) ||
         (needsLighterFocus &&
@@ -791,6 +833,7 @@ export async function runGuidedTurn({
         repeatedQuestion = true;
         continue;
       }
+      if (losesPerspective(checkedQuestion)) continue;
       question = checkedQuestion;
       body = reply;
     } catch (error) {
@@ -814,7 +857,7 @@ export async function runGuidedTurn({
     body = question;
   }
   if (!body && repeatedQuestion && evidence.wish && avoid.has("wish")) {
-    const alternative = "그 바람이 이루어졌다면 그 순간 무엇이 달라졌을 것 같아요?";
+    const alternative = "그 바람이 이루어졌다면 그때 마음이 어떻게 달라졌을 것 같아요?";
     if (!repeatsQuestion(alternative)) {
       body = alternative;
       question = alternative;
