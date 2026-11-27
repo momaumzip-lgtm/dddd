@@ -3,6 +3,8 @@ const outputInstructions =
   /\b(?:JSON\s+malformed|(?:output|return|emit)\s+(?:valid\s+)?JSON\s+only|schema\s+strict|output\s+question\s+string|question\s+(?:field|string)\s+(?:can|must|should)\b|use\s+continue\s*,?\s*sentences|omit\s+extraneous|need\s+natural\s+no\s+question|brief_reply)\b/i;
 const internalFields =
   /assistant\s+to\s*=|[{"']\s*(?:sentences|diaryDraft|sourceQuote)["']\s*:|\}\s*\}\s*[a-z]/i;
+const formatNotes =
+  /:\s*(?:null|undefined|final|analysis)\s*:|\b(?:null|undefined)\s*(?:불가|허용|대신)|(?:질문|답변).{0,20}(?:string|boolean|schema).{0,12}(?:작성|필드|구조|출력)|(?:질문|답변).{0,16}(?:\d+\s*~\s*\d+\s*자|길이\s*제한).{0,16}(?:요구|작성|출력)/i;
 const invisibleControls =
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffc\u200b\u200c\u200e\u200f\u202a-\u202e\u2060-\u206f\u2045-\u2049\u060c]/;
 
@@ -14,6 +16,7 @@ export function hasOutputInstructions(text: string) {
   return (
     outputInstructions.test(text) ||
     internalFields.test(text) ||
+    formatNotes.test(text) ||
     invisibleControls.test(text) ||
     modelArtifacts.test(text)
   );

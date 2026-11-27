@@ -1,3 +1,4 @@
+import { hasOutputInstructions } from "../lib/server/reply-text";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeReply, validateReply } from "../lib/server/safety";
@@ -37,4 +38,15 @@ test("duplicated period-ended questions leave only the final single question", (
   assert.equal(normalized.body, "시간을 맞추지 못하면 무능해 보일 것 같다고 느끼셨네요.");
   assert.equal(normalized.question, "그때 가장 바랐던 도움은 무엇인가요?");
   assert.equal(validateReply(normalized, false), true);
+});
+
+test("model formatting notes cannot be shown alongside a Korean question", () => {
+  assert.equal(
+    hasOutputInstructions(
+      ":null: 25~70자 질문 하나 요구지만 null 불가 string으로 작성하십시오: 무엇이 조금 달라 보이나요?",
+    ),
+    true,
+  );
+  assert.equal(hasOutputInstructions("출력할 때 null 불가라고 했어요."), true);
+  assert.equal(hasOutputInstructions("그 말을 듣고 난 뒤 지금은 무엇이 조금 달라 보여요?"), false);
 });
