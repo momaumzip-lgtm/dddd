@@ -260,3 +260,73 @@ test("an ambiguous generated warning is checked against the user's words before 
   assert.equal(result.progress.completed, false);
   assert.ok(result.explorationView?.nextQuestion);
 });
+
+test("a paraphrase of the last future-care question is retried with a different focus", async () => {
+  const ai = provider();
+  let calls = 0;
+  ai.streamReply = async () => ({
+    mode: "continue",
+    safety: "normal",
+    sentences: [
+      ++calls === 1
+        ? "다음에 비슷한 상황에서 자신을 위해 해보고 싶은 작은 행동이 있나요?"
+        : "그 마음을 알아차리고 지금 가장 달라 보이는 건 무엇인가요?",
+    ],
+  });
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: { ...freshProgress, turns: 1 },
+      emotion: unknownEmotion,
+      history: [
+        { role: "user", content: "친구가 제 말을 끊었어요." },
+        {
+          role: "assistant",
+          content: "다음에 비슷한 일이 생기면 자신을 어떻게 챙겨주고 싶으세요?",
+        },
+      ],
+      message: "내가 말할 기회를 원했어요.",
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(calls, 2);
+  assert.match(result.body, /달라 보이는/);
+});
+
+test("a record request can recover an explicit need from prior user turns", async () => {
+  const ai = provider();
+  const confirmedNeed = "내 말을 소중하게 들어주는 게 필요했어요.";
+  ai.reviewExploration = async () => ({ ...blank, confirmedNeed });
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "summary",
+      control: "record",
+      progress: { ...freshProgress, turns: 1 },
+      emotion: unknownEmotion,
+      history: [
+        { role: "user", content: confirmedNeed },
+        { role: "assistant", content: "그 마음이 중요했군요." },
+      ],
+      message: controlText.record,
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(result.surveyReady, true);
+  assert.deepEqual(result.explorationView?.finalRecord?.needs, [confirmedNeed]);
+});

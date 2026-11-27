@@ -196,7 +196,7 @@ export const emotionSelectionSchema = emotionItemSchema
       (new Set(items.map((item) => normalizeEmotion(itemLabel(item)))).size === items.length &&
         (items.length === 1 || items.every((item) => item.emotionId !== "unknown"))),
   )
-  .transform(({ items, ...value }) => {
+  .transform(({ items, ...value }): EmotionSelection => {
     if (items) return makeEmotionSelection(items, value.version);
     return value.emotionId === "custom" ? value : { ...value, customLabel: "" };
   });

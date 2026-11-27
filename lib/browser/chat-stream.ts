@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { emotionSelectionSchema } from "../emotions";
 import { explorationViewSchema } from "../exploration";
 export class ChatDisplayError extends Error {
   constructor(
@@ -19,7 +20,7 @@ export function chatErrorMessage(error: unknown) {
 export async function failedChatRequest(response: Response) {
   const payload = await response.json().catch(() => null);
   const code = typeof payload?.code === "string" ? payload.code : undefined;
-  if (code && typeof payload.error === "string" && /^[가-힣]/.test(payload.error))
+  if (code && typeof payload.error === "string" && /^(?:AI\s+)?[가-힣]/.test(payload.error))
     return new ChatDisplayError(payload.error, code);
   const message =
     response.status === 429
@@ -42,13 +43,7 @@ export const completedChatSchema = z.object({
   turns: z.number(),
   questions: z.number(),
   exploration: explorationViewSchema.optional(),
-  emotion: z.object({
-    emotionId: z.string(),
-    customLabel: z.string(),
-    intensityBand: z.string(),
-    version: z.number(),
-    intensityPercent: z.number().int().min(0).max(100).optional(),
-  }),
+  emotion: emotionSelectionSchema,
   conversationLimit: z.boolean().optional(),
   timing: z.record(z.string(), z.unknown()).optional(),
 });
@@ -87,9 +82,10 @@ export async function readChatStream(
           onText(text);
         } else if (event.type === "error")
           throw new ChatDisplayError(
-            typeof event.error === "string" && /^[가-힣]/.test(event.error)
+            typeof event.error === "string" && /^(?:AI\s+)?[가-힣]/.test(event.error)
               ? event.error
               : "답변을 마치지 못했어요. 다시 시도해 주세요.",
+            typeof event.code === "string" ? event.code : undefined,
           );
         else if (event.type === "done") {
           done = completedChatSchema.parse(event);

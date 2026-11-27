@@ -30,19 +30,19 @@ import type { StreamingProvider, StreamReply } from "./stream-chat";
 export const explorationDirections: Record<ConversationStage, string> = {
   CONTEXT_EXPLORATION: "오늘 마음에 남은 실제 장면 한 가지부터 물어봅니다.",
   EMOTION_IDENTIFICATION:
-    "그 장면에서 어떤 느낌이 들었는지 구체적으로 묻습니다. 이미 밝힌 감정은 반복해 묻지 않습니다. 하나로 고르기 어렵다면 복합 감정을 허용합니다.",
+    "장면의 구체적인 말이나 변화 하나에 연결해 어떤 느낌이 컸는지 물어요. 여러 감정을 말했다면 각각을 구분하고 아직 설명하지 않은 한 감정만 짚습니다. 이미 밝힌 감정은 되묻지 않습니다.",
   AUTOMATIC_THOUGHT:
-    "그때 순간적으로 떠오른 생각 하나를 이미 말한 장면에 붙여 묻습니다. 실제 사실과 그때 그렇게 느낀 해석을 구분합니다.",
+    "방금 언급한 말이나 행동을 짚고 그 순간 어떤 뜻처럼 느껴졌는지 한 가지만 묻습니다. 사용자가 이미 뜻을 밝힌 경우에는 생각이 다시 무엇이었는지 묻지 않습니다. 확인된 사실과 그 순간의 해석을 구분합니다.",
   PERSONAL_MEANING:
-    "방금 말한 생각이나 장면이 자신에게 왜 유난히 마음에 남았는지, 그 차이를 알 수 있는 구체적 한 가지를 묻습니다.",
+    "그 일이 사용자에게 어떤 신호처럼 느껴졌는지를 실제 말이나 행동에 붙여 묻습니다. 단순히 왜 중요했냐고 되묻지 않습니다. 예를 들어 의견을 지나쳤다는 말을 들었다면 결정 내용과 말을 들을 기회 중 어느 쪽이 마음에 남았는지 살필 수 있습니다. 장면에 없는 대안을 만들어내지 않습니다.",
   UNDERLYING_NEED:
-    "상대가 어떤 말을 하거나 어떻게 행동해줬다면 달랐을지 살피거나, 이미 밝힌 바람 밑에 무엇이 중요했는지 한 가지 더 좁힙니다.",
+    "사용자가 말한 바람이 나왔다면 실제로 달랐으면 하는 행동을 다시 묻지 않습니다. 그 바람이 채워졌을 때 사용자 자신이나 관계가 어떻게 다르게 느껴졌을지 한 가지 좁혀 묻습니다. 사실과 확인되지 않은 욕구를 나눕니다.",
   NEED_VALIDATION:
     "제공된 잠정적인 욕구 한 가지만 검토합니다. 핵심 표현을 그대로 넣고 짧게 맞는지 여쭙습니다. 그 표현이 가까운지는 사용자가 결정합니다.",
   REFRAMING:
     "확인한 욕구를 존중하면서 그때 스친 해석과 실제로 확인한 사실이 어떻게 달랐는지, 혹은 그때의 나에게 어떤 부담이 있었는지 살핍니다. 억지로 좋은 의미를 덧붙이지 않습니다.",
   REFLECTION:
-    "확인된 마음과 본인의 반응을 한 번 연결해, 그것을 알게 된 지금 달라 보이는 한 가지 또는 자신을 챙길 작은 방법을 묻습니다. 기록 권유는 화면에서 제공합니다.",
+    "확인된 마음과 본인이 실제로 한 반응의 연결을 먼저 짚습니다. 처음 스친 해석과 지금 알게 된 것의 차이 중 한 가지만 묻습니다. 이미 그 차이를 들었다면 자기 돌봄이나 다음에 필요한 한 가지를 묻고, 같은 주제의 질문을 연이어 하지 않습니다. 기록 권유는 화면에서 제공합니다.",
   RECORD_GENERATION: "확인된 내용으로 요청한 기록을 만듭니다.",
   SURVEY: "설문 선택은 화면에서 표시합니다.",
   COMPLETED: "현재 대화의 마무리를 표시합니다.",
@@ -57,11 +57,25 @@ const pacingDirections: Record<ReturnType<typeof selectionContext>["pace"], stri
   unknown: "강도를 추정해 말하지 않고 실제로 꺼낸 이야기에 맞춰 질문합니다.",
 };
 
+function openingEmotionFocus(label: string, positive: boolean) {
+  if (positive || /행복|기쁨|뿌듯|즐거/.test(label))
+    return "기쁨을 직접 말한 경우 기쁜 순간에 이미 충족된 것이 무엇인지 물어요. 상황과 선택이 어긋나면 감정을 단정하지 않고 함께 떠오른 마음을 여쭙습니다.";
+  if (/불안|걱정|초조|두려|긴장/.test(label))
+    return "앞으로 무슨 일이 생길까 걱정됐는지 또는 그때 예상하던 일 하나를 가볍게 물어요.";
+  if (/화남|분노|짜증|화가|억울/.test(label))
+    return "가장 마음에 걸린 상대의 말이나 행동 하나 또는 그 순간 본인이 지키고 싶던 것을 가볍게 물어요.";
+  if (/슬픔|그리움|쓸쓸|외로/.test(label))
+    return "그 자리에서 빠져서 아쉬웠던 말, 순간 또는 사람 중 실제 장면에 맞는 하나를 가볍게 물어요.";
+  if (/무기력|피로|지침|권태|벅참/.test(label))
+    return "그 순간 무엇이 버거웠는지 한 가지를 가볍게 묻습니다. 활동이나 긍정적인 생각을 억지로 권하지 않습니다.";
+  return "";
+}
+
 const compact = (text: string) => text.replace(/[\s.?!？！。,…'’‘“”]/g, "");
 const futureCareQuestion = (text: string) =>
   /비슷한|다음(?:에|번)|앞으로/.test(text) &&
-  /어떻게|무엇|뭘|뭐/.test(text) &&
-  /챙기|해\s*(?:보[고는]|볼|줄|주고)|돌보|하고 싶|작은\s*(?:행동|일)/.test(text);
+  /자신|스스로|내\s*마음|마음을\s*돌보|챙[기겨길]|작은\s*(?:행동|일)/.test(text) &&
+  /챙[기겨길]|해\s*(?:보[고는]|볼|줄|주고)|돌보|하고\s*싶|작은\s*(?:행동|일)/.test(text);
 const questionFocus = (text: string) => {
   const phrase = compact(text);
   if (/생각.{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각/.test(phrase)) return "thought";
@@ -94,7 +108,9 @@ export type GuidedPrompt = {
   ordinaryDistress?: boolean;
   clarifying?: boolean;
   gentleFollowup?: boolean;
+  uncertainAnswer?: boolean;
   openingPace?: boolean;
+  emotionFocus?: string;
   paceCheck?: boolean;
 };
 type Allowance = { extra(): Promise<void> };
@@ -299,8 +315,26 @@ export async function runGuidedTurn({
         latest,
       ));
   const previousQuestion = state.pending;
+  // A very strong opening first checks readiness to continue. The next turn can extract
+  // the underlying meaning without delaying that initial check.
+  const initialPace = selectionContext(emotion);
+  const paceBeforeExploration =
+    !history.length &&
+    !wantsRecord &&
+    !plan.asksForPracticalHelp &&
+    initialPace.pace === "veryHigh" &&
+    initialPace.category !== "positive" &&
+    !/기쁘|기쁨|신나|즐거|행복|뿌듯|설레|감격/.test(currentText);
+  const recordNeedsEvidence =
+    wantsRecord &&
+    recent.some((message) => message.role === "user") &&
+    (!before.confirmedNeeds.length || !(before.insight || before.reframe));
   let observation: Observation | undefined;
-  if (currentText && !declinesRecord && (wantsRecord || !needsNoQuestions)) {
+  if (
+    !declinesRecord &&
+    !paceBeforeExploration &&
+    (recordNeedsEvidence || (currentText && !needsNoQuestions))
+  ) {
     await slot.extra();
     try {
       observation = await ai.reviewExploration(recent, before);
@@ -528,7 +562,11 @@ export async function runGuidedTurn({
     intensityGuidance: pacingDirections[emotionContext.pace],
     clarifying: plan.clarifyQuestion,
     gentleFollowup,
+    uncertainAnswer: uncertain.test(currentText),
     openingPace,
+    emotionFocus: openingPace
+      ? openingEmotionFocus(emotionContext.emotion, positiveOpening)
+      : undefined,
     paceCheck,
   };
   let body = "";

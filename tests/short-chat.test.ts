@@ -305,7 +305,18 @@ test("browser requires a matching terminal event; UTF8 split bytes and HTTP-200 
     completed: true,
     turns: 1,
     questions: 0,
-    emotion,
+    emotion: {
+      ...emotion,
+      items: [
+        { ...emotion, version: undefined, intensityBand: "high", intensityPercent: 90 },
+        {
+          emotionId: "custom",
+          customLabel: "기쁘면서도 불안해요",
+          intensityBand: "medium",
+          intensityPercent: 60,
+        },
+      ],
+    },
   };
   let visible = "";
   const result = await readChatStream(
@@ -315,17 +326,21 @@ test("browser requires a matching terminal event; UTF8 split bytes and HTTP-200 
   );
   assert.equal(visible, text);
   assert.equal(result.completed, true);
+  assert.equal(result.emotion.items?.[1]?.customLabel, "기쁘면서도 불안해요");
+  assert.equal(result.emotion.items?.[1]?.intensityPercent, 60);
   await assert.rejects(
     readChatStream(ndjson([{ type: "text", requestId, delta: text }]), requestId, () => {}),
     /끊겼/,
   );
   await assert.rejects(
     readChatStream(
-      ndjson([{ type: "error", requestId, error: "시험용 429" }]),
+      ndjson([
+        { type: "error", requestId, error: "AI 서비스가 잠시 혼잡해요.", code: "PROVIDER_LIMIT" },
+      ]),
       requestId,
       () => {},
     ),
-    /429/,
+    { code: "PROVIDER_LIMIT", message: "AI 서비스가 잠시 혼잡해요." },
   );
   await assert.rejects(
     readChatStream(ndjson([{ ...done, requestId: id() }]), requestId, () => {}),

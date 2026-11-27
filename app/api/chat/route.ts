@@ -86,6 +86,10 @@ export async function POST(req: NextRequest) {
             );
           try {
             emit({ type: "start" });
+            const provider = new AI(chatModel(), c.output, {
+              signal: req.signal,
+              requestId: p.requestId,
+            });
             const result = await runStreamingChat(
               {
                 sid: s.sid,
@@ -104,7 +108,7 @@ export async function POST(req: NextRequest) {
                 control: p.control,
               },
               new Gate(new DatabaseStore(), c),
-              new AI(chatModel(), c.output, { signal: req.signal, requestId: p.requestId }),
+              provider,
               (delta) => emit({ type: "text", delta }),
             );
             const token = await state(
@@ -143,6 +147,7 @@ export async function POST(req: NextRequest) {
                 promptVersion: PROMPT_VERSION,
                 model: chatModel(),
                 requestSetupMs: readyMs,
+                provider: provider.usage(),
                 ...result.timing,
               },
             });
@@ -151,6 +156,7 @@ export async function POST(req: NextRequest) {
               model: chatModel(),
               promptVersion: PROMPT_VERSION,
               requestSetupMs: readyMs,
+              provider: provider.usage(),
               ...result.timing,
             });
           } catch (error) {

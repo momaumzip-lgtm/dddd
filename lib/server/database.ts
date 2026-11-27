@@ -29,16 +29,21 @@ export class DatabaseStore implements Store {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const operation = operations.get(script);
-      if (!operation && script !== "guided_admit") throw new Error("Unknown operation");
+      if (!operation && script !== "guided_admit" && script !== "guided_stage")
+        throw new Error("Unknown operation");
       const db = (database ??= getDatabase()).sql;
       const query =
         script === "guided_admit"
           ? db<{
               code: number;
             }>`SELECT maumzip_guided_admit(${keys}::text[], ${args}::text[]) AS code`
-          : db<{
-              code: number;
-            }>`SELECT maumzip_gate(${operation}, ${keys}::text[], ${args}::text[]) AS code`;
+          : script === "guided_stage"
+            ? db<{
+                code: number;
+              }>`SELECT maumzip_guided_stage(${keys}::text[], ${args}::text[]) AS code`
+            : db<{
+                code: number;
+              }>`SELECT maumzip_gate(${operation}, ${keys}::text[], ${args}::text[]) AS code`;
       const rows = await Promise.race([
         Promise.resolve(query),
         new Promise<never>((_, reject) => {

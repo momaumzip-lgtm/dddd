@@ -51,6 +51,9 @@ export class Gate {
     );
     return this.receipt(keys, sid, cid, rid, this.cap.global);
   }
+  private pendingKey(sid: string, cid: string) {
+    return `{maeum}:guided:pending:${sid}:${cid}`;
+  }
   async enterGuided(sid: string, cid: string, rid: string, revision: number, record: boolean) {
     const keys = this.keys(sid, cid, rid);
     const admission = await this.store.eval(
@@ -62,6 +65,7 @@ export class Gate {
         `{maeum}:guided:session:${sid}:${cid}`,
         keys[2].replace(":minute:", ":guided:minute:"),
         keys[3].replace(":day:", ":guided:day:"),
+        this.pendingKey(sid, cid),
       ],
       [String(this.cap.minute), String(this.cap.day), String(revision), rid],
     );
@@ -88,8 +92,13 @@ export class Gate {
       stage: async (next: number) =>
         this.check(
           await this.store.eval(
-            "stage_reply",
-            [keys[1], keys[5], this.receiptKeys(sid, cid, rid)[0]],
+            guided ? "guided_stage" : "stage_reply",
+            [
+              keys[1],
+              keys[5],
+              this.receiptKeys(sid, cid, rid)[0],
+              ...(guided ? [this.pendingKey(sid, cid)] : []),
+            ],
             [rid, String(next)],
           ),
         ),

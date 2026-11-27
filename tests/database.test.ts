@@ -36,13 +36,24 @@ async function fixture() {
       "utf8",
     ),
   );
+  await db.exec(
+    await readFile(
+      new URL(
+        "../netlify/database/migrations/202611270002_guided_pending_reply.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   const store: Store = {
     async eval(op, keys, args) {
       const { rows } = await db.query<{ code: number }>(
         op === "guided_admit"
           ? "SELECT maumzip_guided_admit($1::text[], $2::text[]) AS code"
-          : "SELECT maumzip_gate($1, $2::text[], $3::text[]) AS code",
-        op === "guided_admit" ? [keys, args] : [op, keys, args],
+          : op === "guided_stage"
+            ? "SELECT maumzip_guided_stage($1::text[], $2::text[]) AS code"
+            : "SELECT maumzip_gate($1, $2::text[], $3::text[]) AS code",
+        op === "guided_admit" || op === "guided_stage" ? [keys, args] : [op, keys, args],
       );
       return rows[0].code;
     },
@@ -186,6 +197,8 @@ test("same-minute guided dialogue passes 30 replies, rejects duplicates, and kee
       }
       await slot.extra();
       await slot.stage(i + 1);
+      if (!i)
+        await assert.rejects(gate.enterGuided("new", "c", "cross-tab", i, false), { code: "BUSY" });
       await gate.acknowledge("new", "c", rid, i + 1);
     }
     await assert.rejects(gate.enterGuided("new", "next", "new-visit", 0, false), {
@@ -200,6 +213,25 @@ test("same-minute guided dialogue passes 30 replies, rejects duplicates, and kee
     await record.stage(32);
     await gate.acknowledge("new", "c", "record", 32);
     await assert.rejects(gate.enterGuided("new", "c", "old", 31, true), { code: "STALE" });
+  } finally {
+    await db.close();
+  }
+});
+
+test("a lost guided reply can be retried after the short receipt hold without storing text", async () => {
+  const { db, store } = await fixture();
+  try {
+    const gate = new Gate(store, { minute: 1, day: 1, global: 30 });
+    const slot = await gate.enterGuided("s", "c", "first", 0, false);
+    await slot.stage(1);
+    await assert.rejects(gate.enterGuided("s", "c", "retry-soon", 0, false), { code: "BUSY" });
+    await db.exec(
+      "UPDATE maumzip_gate_values SET expires_at = clock_timestamp() WHERE key = '{maeum}:guided:pending:s:c'",
+    );
+    const retry = await gate.enterGuided("s", "c", "retry", 0, false);
+    await retry.stage(1);
+    await gate.acknowledge("s", "c", "retry", 1);
+    await gate.acknowledge("s", "c", "retry", 1);
   } finally {
     await db.close();
   }

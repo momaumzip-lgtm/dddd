@@ -196,8 +196,8 @@ export async function runStreamingChat(
     : [];
   const safetyHistory: Message[] = args.guided
     ? [
-        ...messages.slice(-12),
         ...directEmotions.map((content) => ({ role: "user" as const, content })),
+        ...messages.slice(-12),
       ]
     : messages;
   let safety = retainRisk(args.safety, urgent([args.message, ...directEmotions].join("\n"))),

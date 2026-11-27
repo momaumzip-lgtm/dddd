@@ -481,6 +481,10 @@ export default function Chat({ config }: { config: PublicConfig }) {
       if (data.notice) setError("안전 검수를 마치지 못해 대체 안내를 표시했어요.");
     } catch (e) {
       if (epoch !== generation.current) return;
+      if (e instanceof ChatDisplayError) {
+        if (e.code === "CONTEXT") setConversationLimit(true);
+        if (["SESSION", "STATE", "STALE"].includes(e.code || "")) setSessionInvalid(true);
+      }
       if (abort.signal.aborted) {
         setStatus("stopped");
         setError("답변 받기를 중단했어요. 이미 전송된 요청은 처리되거나 비용이 발생할 수 있어요.");
