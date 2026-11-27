@@ -121,7 +121,9 @@ const questionFocus = (text: string): keyof typeof focusLabels | null => {
     (/바랐던|어떤점이달라지면.{0,34}느끼|(?:주|알아차리|알아채)길바(?:라|랐|란)|듣고싶|받고싶|해줬으면|해주길바|들어주길바|들어줬으면/.test(
       phrase,
     ) ||
-      /(?:반응|태도|말|행동|어떻게).{0,30}(?:바라|바랐|원했|기대|해주|해줬|들어주)/.test(phrase))
+      /(?:반응|태도|말|행동|어떻게).{0,30}(?:바라|바랐|원했|기대|해주|해줬|들어주|보여주|보여줬)/.test(
+        phrase,
+      ))
   )
     return "wish";
   if (/느낌|어떤마음|어떤감정/.test(phrase)) return "feeling";

@@ -256,7 +256,7 @@ export async function runStreamingChat(
       const requestStartedAt = args.requestStartedAt ?? started;
       const slowSetup = started - requestStartedAt + admissionMs >= 150;
       // Keep more room for transport and rendering when request setup is slow.
-      const openingDeadline = requestStartedAt + (slowSetup ? 1500 : 2050);
+      const openingDeadline = requestStartedAt + (slowSetup ? 1500 : 1800);
       const outcome = await runGuidedTurn({
         ai,
         slot: allowance,

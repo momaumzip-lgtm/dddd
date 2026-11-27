@@ -471,7 +471,7 @@ test("the next turn cannot paraphrase an earlier question even after a change of
       safety: "normal",
       sentences: [
         ++attempts === 1
-          ? "그때 친구에게서 듣고 싶었던 반응이 있었나요?"
+          ? "그때 친구가 어떤 태도를 보여줬다면 관심이 있다고 느꼈을까요?"
           : "그 생각이 들고 나서 실제로 어떻게 하셨어요?",
       ],
     };
