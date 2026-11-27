@@ -70,6 +70,7 @@ export type StreamContext = {
 };
 export interface StreamingProvider {
   accountResponses?(charge: () => Promise<void>): void;
+  limitOpeningRequests?(deadline?: number): void;
   reviewExploration(messages: Message[], evidence: GuidedEvidence): Promise<Observation>;
   generateMindRecord(
     messages: Message[],
@@ -221,6 +222,7 @@ export async function runStreamingChat(
     body += delta;
     onText(delta);
   };
+  let inputUnflagged = false;
   try {
     if (safety === "normal" || safety === "check") {
       const checked = await ai.moderate(
@@ -229,6 +231,7 @@ export async function runStreamingChat(
           .map((m) => m.content)
           .join("\n"),
       );
+      inputUnflagged = safety === "normal" && !checked.flagged;
       // Contextual safety routing remains for flagged input and unresolved checks, not every ordinary turn.
       if (checked.flagged || safety === "check") {
         await allowance.extra();
@@ -260,6 +263,8 @@ export async function runStreamingChat(
         control: args.control,
         restart: args.action === "continue",
         turns,
+        inputUnflagged,
+        openingDeadline: started + 2100,
       });
       exploration = outcome.state;
       explorationView = outcome.view;

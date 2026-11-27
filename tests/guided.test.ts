@@ -11,6 +11,7 @@ import {
 } from "../lib/exploration";
 import { runStreamingChat, type StreamingProvider } from "../lib/server/stream-chat";
 import { Gate } from "../lib/server/limits";
+import { AppError } from "../lib/server/errors";
 import { LuaStore } from "./store";
 import { guidedScenes } from "./fixtures/guided-scenes";
 
@@ -360,4 +361,142 @@ test("a strong disappointment starts with a lighter question than medium intensi
   }
   assert.match((await first(50)).body, /어떤 뜻/);
   assert.match((await first(80)).body, /어떻게 해줬으면/);
+});
+
+test("the opening defers evidence extraction while preserving the ordinary actor check", async () => {
+  const ai = provider();
+  let checked = false;
+  ai.reviewExploration = async () => assert.fail("opening must not wait for extraction");
+  ai.checkAttribution = async () => {
+    checked = true;
+    return { edits: [] };
+  };
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: freshProgress,
+      history: [],
+      message: "제가 고른 책을 언니가 챙겨 갔어요.",
+      emotion: { ...unknownEmotion, intensityPercent: 60 },
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(checked, true);
+  assert.ok(result.explorationView?.nextQuestion);
+});
+test("an unflagged opening still asks a real question when its generation budget expires", async () => {
+  const ai = provider();
+  let deadline: number | undefined;
+  ai.limitOpeningRequests = (value) => {
+    deadline = value;
+  };
+  ai.streamReply = async () => {
+    assert.ok(deadline && deadline > performance.now());
+    throw new AppError(504, "AI_TIMEOUT", "opening budget expired");
+  };
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: freshProgress,
+      history: [],
+      message: "친구가 말을 끊었어요.",
+      emotion: { ...unknownEmotion, intensityPercent: 60 },
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(result.progress.completed, false);
+  assert.equal(result.safety, "normal");
+  assert.match(result.body, /생각.*\?$/);
+  assert.equal(result.explorationView?.nextQuestion, result.body);
+});
+test("very strong first messages offer a real pace choice only after an unflagged input screen", async () => {
+  const ai = provider();
+  const order: string[] = [];
+  ai.moderate = async () => {
+    order.push("screen");
+    return { flagged: false, categories: {} };
+  };
+  ai.reviewExploration = async () => assert.fail("do not wait for extraction");
+  ai.streamReply = async () => assert.fail("do not generate a second pace check");
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: freshProgress,
+      history: [],
+      message: "친구가 제 말을 끊어서 서운했어요.",
+      emotion: { ...unknownEmotion, intensityPercent: 95 },
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => order.push("text"),
+  );
+  assert.deepEqual(order, ["screen", "text"]);
+  assert.match(result.body, /이어가도 괜찮으세요/);
+  assert.equal(result.progress.completed, false);
+});
+test("the next turn cannot paraphrase a prior question about the reaction the user wanted", async () => {
+  const ai = provider();
+  let attempts = 0;
+  ai.reviewExploration = async () => ({
+    ...blank,
+    situation: "친구가 말을 끊었어요.",
+    thought: "친구가 나를 무시하나 싶었어요.",
+  });
+  ai.streamReply = async (_messages, context) => {
+    assert.ok(context.guided?.avoidFocus?.some((label) => label.includes("바랐던")));
+    return {
+      mode: "continue",
+      safety: "normal",
+      sentences: [
+        ++attempts === 1
+          ? "그때 친구에게서 듣고 싶었던 반응이 있었나요?"
+          : "그 생각이 들고 나서 실제로 어떻게 하셨어요?",
+      ],
+    };
+  };
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      progress: { ...freshProgress, turns: 1 },
+      emotion: unknownEmotion,
+      history: [
+        { role: "user", content: "친구가 말을 끊었어요." },
+        { role: "assistant", content: "친구가 어떤 태도로 들어주길 바라셨나요?" },
+      ],
+      message: "친구가 나를 무시하나 싶었어요.",
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.match(result.explorationView?.nextQuestion || "", /실제로 어떻게/);
 });

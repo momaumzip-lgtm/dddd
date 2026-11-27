@@ -94,15 +94,39 @@ const futureCareQuestion = (text: string) =>
   /비슷한|다음(?:에|번)|앞으로/.test(text) &&
   /자신|스스로|내\s*마음|마음을\s*돌보|챙[기겨길]|작은\s*(?:행동|일)/.test(text) &&
   /챙[기겨길]|해\s*(?:보[고는]|볼|줄|주고)|돌보|하고\s*싶|작은\s*(?:행동|일)/.test(text);
-const questionFocus = (text: string) => {
+const focusLabels = {
+  thought: "그 순간 스친 생각이나 해석",
+  reaction: "그 자리에서 실제로 한 행동",
+  wish: "상대에게 바랐던 말, 태도나 행동",
+  feeling: "그 순간의 감정",
+  futureCare: "다음에 비슷한 일이 있을 때 자신을 돌보는 방법",
+} as const;
+const questionFocus = (text: string): keyof typeof focusLabels | null => {
   const phrase = compact(text);
-  if (/생각.{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각/.test(phrase)) return "thought";
+  if (futureCareQuestion(phrase)) return "futureCare";
+  if (
+    /(?:생각|어떤말).{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각|어떤(?:뜻|의미|신호)처럼/.test(
+      phrase,
+    )
+  )
+    return "thought";
   if (/뭐라고.{0,5}했|어떻게.{0,8}(?:행동|하셨어요)|실제로.{0,5}(?:하셨|했어)/.test(phrase))
     return "reaction";
-  if (/바랐|원했|듣고싶|해줬으면/.test(phrase)) return "wish";
+  if (
+    !/달라졌|달랐|어떤의미|뜻이었|도움이됐|왜.{0,10}중요/.test(phrase) &&
+    (/바랐던|듣고싶|받고싶|해줬으면|해주길바|들어주길바|들어줬으면/.test(phrase) ||
+      /(?:반응|태도|말|행동|어떻게).{0,30}(?:바라|바랐|원했|기대|해주|해줬|들어주)/.test(phrase))
+  )
+    return "wish";
   if (/느낌|어떤마음|어떤감정/.test(phrase)) return "feeling";
   return null;
 };
+const openingRiskCue =
+  /죽|자살|자해|다치|해치|폭력|때리|때렸|맞았|칼|총|약물|살려|살기\s*싫|사라지고\s*싶|버티기\s*힘|끝내고\s*싶|안전하지|피가\s*나/;
+const positiveWords = /기쁘|기뻤|기쁨|신나|즐거|행복|뿌듯|설레|감격/;
+const positiveStory = (text: string) =>
+  positiveWords.test(text) && !/불안|죄책|서운|겁나|걱정|속상|슬프|두려/.test(text);
+const paceQuestion = "이 이야기를 지금 조금 더 이어가도 괜찮으세요?";
 const lastQuestion = (text: string) =>
   [...sentenceBoundaries.segment(text)]
     .map(({ segment }) => segment.trim())
@@ -128,8 +152,10 @@ export type GuidedPrompt = {
   gentleFollowup?: boolean;
   uncertainAnswer?: boolean;
   openingPace?: boolean;
+  briefOpening?: boolean;
   emotionFocus?: string;
   paceCheck?: boolean;
+  avoidFocus?: string[];
 };
 type Allowance = { extra(): Promise<void> };
 type Plan = ReturnType<typeof responsePlan>;
@@ -281,6 +307,8 @@ export async function runGuidedTurn({
   control,
   restart,
   turns,
+  inputUnflagged,
+  openingDeadline,
 }: {
   ai: StreamingProvider;
   slot: Allowance;
@@ -292,6 +320,8 @@ export async function runGuidedTurn({
   control?: ExplorationControl;
   restart: boolean;
   turns: number;
+  inputUnflagged?: boolean;
+  openingDeadline?: number;
 }) {
   const messages: Message[] = [...history, { role: "user", content: latest }];
   const index = history.length;
@@ -333,16 +363,20 @@ export async function runGuidedTurn({
         latest,
       ));
   const previousQuestion = state.pending;
-  // A very strong opening first checks readiness to continue. The next turn can extract
-  // the underlying meaning without delaying that initial check.
   const initialPace = selectionContext(emotion);
-  const paceBeforeExploration =
-    !history.length &&
-    !wantsRecord &&
+  const firstExchange = !history.length && !wantsRecord;
+  // The opening question can use the user's own scene. Deeper evidence gets extracted
+  // on the next turn or when a record is requested.
+  const deferOpeningReview =
+    firstExchange &&
+    inputUnflagged &&
     !plan.asksForPracticalHelp &&
+    !openingRiskCue.test(currentText);
+  const paceBeforeExploration =
+    deferOpeningReview &&
     initialPace.pace === "veryHigh" &&
     initialPace.category !== "positive" &&
-    !/기쁘|기쁨|신나|즐거|행복|뿌듯|설레|감격/.test(currentText);
+    !positiveStory(currentText);
   const recordNeedsEvidence =
     wantsRecord &&
     recent.some((message) => message.role === "user") &&
@@ -350,7 +384,7 @@ export async function runGuidedTurn({
   let observation: Observation | undefined;
   if (
     !declinesRecord &&
-    !paceBeforeExploration &&
+    !deferOpeningReview &&
     (recordNeedsEvidence || (currentText && !needsNoQuestions))
   ) {
     await slot.extra();
@@ -555,22 +589,47 @@ export async function runGuidedTurn({
     evidence.selectedEmotion || state.start === 0 ? emotion : unknownEmotion,
   );
   const openingPace = !history.length && !needsNoQuestions && !plan.asksForPracticalHelp;
+  const statedPositive =
+    evidence.expressedEmotions.some((text) => positiveWords.test(text) || /좋았/.test(text)) ||
+    (openingPace && positiveWords.test(currentText));
   const positiveOpening =
     emotionContext.category === "positive" ||
-    (evidence.expressedEmotions.length > 0 &&
-      evidence.expressedEmotions.every((text) =>
-        /기쁘|기쁨|신나|즐거|행복|뿌듯|설레|감격/.test(text),
-      ));
+    (evidence.expressedEmotions.length > 0 && evidence.expressedEmotions.every(positiveStory)) ||
+    (openingPace && positiveStory(currentText));
   const paceCheck = openingPace && !positiveOpening && emotionContext.pace === "veryHigh";
-  const paceQuestion = "이 이야기를 지금 조금 더 이어가도 괜찮으세요?";
+  if (
+    inputUnflagged &&
+    paceBeforeExploration &&
+    paceCheck &&
+    !emotionItems(emotion).some((item) => openingRiskCue.test(item.customLabel))
+  ) {
+    return {
+      body: `편한 속도로 이야기해도 괜찮아요. ${paceQuestion}`,
+      state,
+      view: viewFor(state, evidence, emotion, turns, paceQuestion, null, null),
+      safety: "normal" as Safety,
+      questions: 1,
+    };
+  }
   const oldQuestions = history
-    .slice(-8)
+    .slice(Math.max(state.start, history.length - 8))
     .filter((m) => m.role === "assistant")
-    .map((m) => compact(lastQuestion(m.content)));
-  const previousFocus = questionFocus(lastQuestion(history.at(-1)?.content || ""));
-  const statedPositive = evidence.expressedEmotions.some((text) =>
-    /기쁘|기쁨|신나|즐거|행복|뿌듯|설레|감격|좋았/.test(text),
-  );
+    .map((m) => lastQuestion(m.content))
+    .filter(Boolean);
+  const previousFocus = questionFocus(oldQuestions.at(-1) || "");
+  const avoid = new Set<keyof typeof focusLabels>();
+  if (previousFocus) avoid.add(previousFocus);
+  if (evidence.thought) avoid.add("thought");
+  if (oldQuestions.slice(-2).some(futureCareQuestion)) avoid.add("futureCare");
+  if (evidence.wish) avoid.add("wish");
+  const repeatsQuestion = (question: string) => {
+    if (!question) return false;
+    const currentFocus = questionFocus(question);
+    return (
+      oldQuestions.some((old) => compact(old) === compact(question)) ||
+      Boolean(currentFocus && avoid.has(currentFocus))
+    );
+  };
   const focus = openingPace
     ? openingEmotionFocus(emotionContext.emotion, positiveOpening)
     : undefined;
@@ -597,12 +656,24 @@ export async function runGuidedTurn({
     gentleFollowup,
     uncertainAnswer: uncertain.test(currentText),
     openingPace,
+    briefOpening: deferOpeningReview,
     emotionFocus: focus?.direction || (closeToHurt ? lightWish.direction : undefined),
     paceCheck,
+    avoidFocus: Array.from(avoid, (item) => focusLabels[item]),
   };
+  const enforceOpeningDeadline =
+    openingPace &&
+    deferOpeningReview &&
+    openingDeadline !== undefined &&
+    typeof ai.limitOpeningRequests === "function";
+  if (enforceOpeningDeadline) ai.limitOpeningRequests?.(openingDeadline);
+  const openingExpired = (error: unknown) =>
+    enforceOpeningDeadline && error instanceof AppError && error.code === "AI_TIMEOUT";
+  let openingTimedOut = false;
   let body = "";
   let question = "";
   let ambiguousRiskReviewed = false;
+  let repeatedQuestion = false;
   for (let attempt = 0; attempt < 2 && !body; attempt++) {
     if (attempt) await slot.extra();
     let raw: StreamReply;
@@ -625,6 +696,10 @@ export async function runGuidedTurn({
         async () => {},
       );
     } catch (error) {
+      if (openingExpired(error)) {
+        openingTimedOut = true;
+        break;
+      }
       if (!repairable(error)) throw error;
       continue;
     }
@@ -634,8 +709,10 @@ export async function runGuidedTurn({
       if (raw.mode !== "refusal" && risk === "check") {
         if (ambiguousRiskReviewed) continue;
         await slot.extra();
+        if (enforceOpeningDeadline) ai.limitOpeningRequests?.();
         const routed = await ai.classify(messages, { generatedAmbiguousCheck: true }, "normal");
         if (routed.safety === "normal" && !routed.harmfulRequest) {
+          if (enforceOpeningDeadline) ai.limitOpeningRequests?.(openingDeadline);
           ambiguousRiskReviewed = true;
           prompt.ordinaryDistress = true;
           continue;
@@ -665,17 +742,17 @@ export async function runGuidedTurn({
       : needsNoQuestions
         ? ""
         : lastQuestion(fields.at(-1) || "");
+    const repeated = repeatsQuestion(proposed);
+    repeatedQuestion ||= repeated;
     if (
       proposed &&
       (proposed.length > 100 ||
-        oldQuestions.includes(compact(proposed)) ||
+        repeated ||
         (closeToHurt &&
           (questionFocus(proposed) === "thought" || /어떤\s*(?:뜻|의미)처럼/.test(proposed))) ||
         (needsLighterFocus &&
           /(?:어떤|무슨|어떻게|어떤 식).{0,25}반응|어떻게.{0,8}해\s*줬/.test(proposed)) ||
-        (control === "skip" && previousFocus && previousFocus === questionFocus(proposed)) ||
         (!statedPositive && /특히 좋았|좋으셨|기쁘셨|뿌듯하셨|행복하셨/.test(proposed)) ||
-        (futureCareQuestion(proposed) && oldQuestions.slice(-2).some(futureCareQuestion)) ||
         !selectSentences(proposed, true, false, new Set()).asked)
     )
       continue;
@@ -699,13 +776,45 @@ export async function runGuidedTurn({
       if (flags.some(Boolean) || attributed.sentences.some((text) => !validText(text))) continue;
       const reply = attributed.sentences.join(" ");
       if (reply !== sentences.join(" ") && (await ai.moderate(reply)).flagged) continue;
-      question = proposed ? lastQuestion(attributed.sentences.at(-1) || "") : "";
+      const checkedQuestion = proposed ? lastQuestion(attributed.sentences.at(-1) || "") : "";
+      if (repeatsQuestion(checkedQuestion)) {
+        repeatedQuestion = true;
+        continue;
+      }
+      question = checkedQuestion;
       body = reply;
     } catch (error) {
+      if (openingExpired(error)) {
+        openingTimedOut = true;
+        break;
+      }
       if (!(error instanceof AppError) || error.code !== "ATTRIBUTION") throw error;
     }
   }
-  if (!body && control === "skip" && evidence.situation && previousFocus === "thought") {
+  if (!body && openingTimedOut) {
+    question = closeToHurt
+      ? lightWish.lightQuestion
+      : (focus?.lightQuestion ??
+        (!evidence.situation
+          ? "오늘 마음에 남은 장면 하나부터 나눠 주실래요?"
+          : emotionContext.pace === "low"
+            ? "그 장면에서 유난히 마음에 남은 말이나 행동이 있었나요?"
+            : "그 일이 있었을 때, 어떤 생각이 가장 먼저 떠올랐나요?"));
+    body = question;
+  }
+  if (!body && repeatedQuestion && evidence.wish && avoid.has("wish")) {
+    const alternative = "그 바람이 이루어졌다면 그 순간 무엇이 달라졌을 것 같아요?";
+    if (!repeatsQuestion(alternative)) {
+      body = alternative;
+      question = alternative;
+    }
+  }
+  if (
+    !body &&
+    (control === "skip" || repeatedQuestion) &&
+    evidence.situation &&
+    (previousFocus === "thought" || (previousFocus === "wish" && evidence.thought))
+  ) {
     body = "그 일이 있고 나서 바로 어떻게 하셨어요?";
     question = body;
   }
@@ -738,7 +847,7 @@ export async function runGuidedTurn({
     const fallback = `그때 느낀 마음이 ‘${candidate.slice(0, 100)}’에 가까웠을까요?`;
     if (
       validText(fallback) &&
-      !oldQuestions.includes(compact(fallback)) &&
+      !repeatsQuestion(fallback) &&
       !(await ai.moderate(fallback)).flagged
     ) {
       body = fallback;
