@@ -61,7 +61,7 @@ const compact = (text: string) => text.replace(/[\s.?!？！。,…'’‘“”
 const futureCareQuestion = (text: string) =>
   /비슷한|다음(?:에|번)|앞으로/.test(text) &&
   /어떻게|무엇|뭘|뭐/.test(text) &&
-  /챙기|해보고|해 보고|해주고|해 주고|돌보|하고 싶/.test(text);
+  /챙기|해\s*(?:보[고는]|볼|줄|주고)|돌보|하고 싶|작은\s*(?:행동|일)/.test(text);
 const questionFocus = (text: string) => {
   const phrase = compact(text);
   if (/생각.{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각/.test(phrase)) return "thought";
@@ -432,7 +432,7 @@ export async function runGuidedTurn({
         )
         .map((item) => item.customLabel);
       if (custom.length) {
-        const picked = `직접 고른 감정은 ${custom.map((label) => `‘${label}’`).join(", ")}예요.`;
+        const picked = `처음 적은 감정에는 ${custom.map((label) => `‘${label}’`).join(", ")}도 있었어요.`;
         record.emotions =
           record.emotions && picked.length + record.emotions.length < 239
             ? `${picked} ${record.emotions}`

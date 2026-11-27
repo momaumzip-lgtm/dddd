@@ -47,14 +47,17 @@ export function installPagePrivacy(
       });
     }, 0);
   };
+  const onPageShow = (event: PageTransitionEvent) => {
+    if (event.persisted) restore();
+  };
   window.addEventListener("pagehide", hideAndClear);
-  window.addEventListener("pageshow", restore);
+  window.addEventListener("pageshow", onPageShow);
   window.addEventListener("popstate", restore);
   restore();
   return () => {
     cancel();
     window.removeEventListener("pagehide", hideAndClear);
-    window.removeEventListener("pageshow", restore);
+    window.removeEventListener("pageshow", onPageShow);
     window.removeEventListener("popstate", restore);
     root.removeAttribute("data-restoring");
   };
