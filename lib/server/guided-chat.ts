@@ -59,16 +59,34 @@ const pacingDirections: Record<ReturnType<typeof selectionContext>["pace"], stri
 
 function openingEmotionFocus(label: string, positive: boolean) {
   if (positive || /행복|기쁨|뿌듯|즐거/.test(label))
-    return "기쁨을 직접 말한 경우 기쁜 순간에 이미 충족된 것이 무엇인지 물어요. 상황과 선택이 어긋나면 감정을 단정하지 않고 함께 떠오른 마음을 여쭙습니다.";
+    return {
+      direction:
+        "기쁨을 직접 말한 경우 기쁜 순간에 이미 충족된 것이 무엇인지 물어요. 상황과 선택이 어긋나면 감정을 단정하지 않고 함께 떠오른 마음을 여쭙습니다.",
+      lightQuestion: "그 일에서 가장 또렷하게 마음에 남은 순간이 있었나요?",
+    };
   if (/불안|걱정|초조|두려|긴장/.test(label))
-    return "앞으로 무슨 일이 생길까 걱정됐는지 또는 그때 예상하던 일 하나를 가볍게 물어요.";
+    return {
+      direction: "앞으로 무슨 일이 생길까 걱정됐는지 또는 그때 예상하던 일 하나를 가볍게 물어요.",
+      lightQuestion: "그때 어떤 일이 생길까 가장 걱정되셨어요?",
+    };
   if (/화남|분노|짜증|화가|억울/.test(label))
-    return "가장 마음에 걸린 상대의 말이나 행동 하나 또는 그 순간 본인이 지키고 싶던 것을 가볍게 물어요.";
+    return {
+      direction:
+        "가장 마음에 걸린 상대의 말이나 행동 하나 또는 그 순간 본인이 지키고 싶던 것을 가볍게 물어요.",
+      lightQuestion: "그 순간 어떤 말이나 행동이 가장 마음에 걸렸나요?",
+    };
   if (/슬픔|그리움|쓸쓸|외로/.test(label))
-    return "그 자리에서 빠져서 아쉬웠던 말, 순간 또는 사람 중 실제 장면에 맞는 하나를 가볍게 물어요.";
+    return {
+      direction:
+        "그 자리에서 빠져서 아쉬웠던 말, 순간 또는 사람 중 실제 장면에 맞는 하나를 가볍게 물어요.",
+      lightQuestion: "그 장면에서 특히 아쉬웠던 순간이 있었나요?",
+    };
   if (/무기력|피로|지침|권태|벅참/.test(label))
-    return "그 순간 무엇이 버거웠는지 한 가지를 가볍게 묻습니다. 활동이나 긍정적인 생각을 억지로 권하지 않습니다.";
-  return "";
+    return {
+      direction:
+        "그 순간 무엇이 버거웠는지 한 가지를 가볍게 묻습니다. 활동이나 긍정적인 생각을 억지로 권하지 않습니다.",
+      lightQuestion: "그때 제일 힘이 빠졌던 순간이 있었나요?",
+    };
 }
 
 const compact = (text: string) => text.replace(/[\s.?!？！。,…'’‘“”]/g, "");
@@ -553,6 +571,21 @@ export async function runGuidedTurn({
   const statedPositive = evidence.expressedEmotions.some((text) =>
     /기쁘|기쁨|신나|즐거|행복|뿌듯|설레|감격|좋았/.test(text),
   );
+  const focus = openingPace
+    ? openingEmotionFocus(emotionContext.emotion, positiveOpening)
+    : undefined;
+  const closeToHurt =
+    openingPace &&
+    emotionContext.pace === "high" &&
+    !focus &&
+    /서운|섭섭|아쉬/.test(emotionContext.emotion) &&
+    !evidence.wish;
+  const lightWish = {
+    direction:
+      "서운함이 큰 첫 장면에서는 사건의 뜻이나 이유를 분석하기보다 그때 바랐던 구체적인 말이나 행동 하나만 가볍게 묻습니다.",
+    lightQuestion: "그 순간 상대가 어떻게 해줬으면 조금 덜 서운했을까요?",
+  };
+  const needsLighterFocus = Boolean(focus && emotionContext.pace === "high" && !evidence.wish);
   const prompt: GuidedPrompt = {
     stage: state.stage,
     evidence,
@@ -564,9 +597,7 @@ export async function runGuidedTurn({
     gentleFollowup,
     uncertainAnswer: uncertain.test(currentText),
     openingPace,
-    emotionFocus: openingPace
-      ? openingEmotionFocus(emotionContext.emotion, positiveOpening)
-      : undefined,
+    emotionFocus: focus?.direction || (closeToHurt ? lightWish.direction : undefined),
     paceCheck,
   };
   let body = "";
@@ -638,6 +669,10 @@ export async function runGuidedTurn({
       proposed &&
       (proposed.length > 100 ||
         oldQuestions.includes(compact(proposed)) ||
+        (closeToHurt &&
+          (questionFocus(proposed) === "thought" || /어떤\s*(?:뜻|의미)처럼/.test(proposed))) ||
+        (needsLighterFocus &&
+          /(?:어떤|무슨|어떻게|어떤 식).{0,25}반응|어떻게.{0,8}해\s*줬/.test(proposed)) ||
         (control === "skip" && previousFocus && previousFocus === questionFocus(proposed)) ||
         (!statedPositive && /특히 좋았|좋으셨|기쁘셨|뿌듯하셨|행복하셨/.test(proposed)) ||
         (futureCareQuestion(proposed) && oldQuestions.slice(-2).some(futureCareQuestion)) ||
@@ -673,6 +708,14 @@ export async function runGuidedTurn({
   if (!body && control === "skip" && evidence.situation && previousFocus === "thought") {
     body = "그 일이 있고 나서 바로 어떻게 하셨어요?";
     question = body;
+  }
+  if (!body && closeToHurt) {
+    question = lightWish.lightQuestion;
+    body = question;
+  }
+  if (!body && needsLighterFocus && focus) {
+    question = focus.lightQuestion;
+    body = question;
   }
   if (!body && paceCheck) {
     body = `편하신 속도로 이야기해도 괜찮아요. ${paceQuestion}`;

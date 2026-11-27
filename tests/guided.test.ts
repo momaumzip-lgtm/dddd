@@ -330,3 +330,34 @@ test("a record request can recover an explicit need from prior user turns", asyn
   assert.equal(result.surveyReady, true);
   assert.deepEqual(result.explorationView?.finalRecord?.needs, [confirmedNeed]);
 });
+
+test("a strong disappointment starts with a lighter question than medium intensity", async () => {
+  const ai = provider();
+  ai.streamReply = async () => ({
+    mode: "continue",
+    safety: "normal",
+    sentences: ["그 순간 친구의 행동이 어떤 뜻처럼 느껴지셨나요?"],
+  });
+  async function first(percent: number) {
+    return runStreamingChat(
+      {
+        sid: id(),
+        cid: id(),
+        rid: id(),
+        revision: 0,
+        safety: "normal",
+        guided: true,
+        action: "chat",
+        progress: freshProgress,
+        history: [],
+        message: "친구가 말을 중간에 끊었어요.",
+        emotion: { ...unknownEmotion, emotionId: "neg-056", intensityPercent: percent },
+      },
+      new Gate(new LuaStore(), cap),
+      ai,
+      () => {},
+    );
+  }
+  assert.match((await first(50)).body, /어떤 뜻/);
+  assert.match((await first(80)).body, /어떻게 해줬으면/);
+});

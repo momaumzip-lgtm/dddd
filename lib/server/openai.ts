@@ -579,7 +579,7 @@ export class AI {
                   : guided.openingPace && guided.intensity === "low"
                     ? " 첫 질문에서는 이유나 생각을 분석하지 않습니다. 실제 장면에서 마음에 남은 말이나 행동 한 가지를 짚고 대답하기 편하게 묻습니다."
                     : guided.openingPace && guided.intensity === "high"
-                      ? " 먼저 그 순간 겪은 일을 짧게 이해해 주세요. 첫 질문은 같은 장면 안의 구체적인 한 부분 또는 사용자가 받고 싶었던 반응 중 하나를 묻습니다."
+                      ? " 먼저 그 순간 겪은 일을 짧게 이해해 주세요. 감정별 안내가 있으면 그 소재를 따르고, 상대가 어떤 반응을 해주길 바랐는지로 질문을 획일화하지 않습니다."
                       : "") +
                 (guided.emotionFocus && !guided.paceCheck
                   ? " 첫 질문의 소재는 이 안내를 우선합니다. " + guided.emotionFocus
