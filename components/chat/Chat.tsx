@@ -840,7 +840,6 @@ export default function Chat({ config }: { config: PublicConfig }) {
                         ))}
                       </div>
                     )}
-                    <p>질문은 계속 이어져요 · 충분할 때 언제든 눌러 정리하세요</p>
                     <button
                       className="chat-record-button"
                       type="button"

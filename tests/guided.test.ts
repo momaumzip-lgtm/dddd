@@ -126,7 +126,17 @@ for (const scene of guidedScenes) {
 test("the guided thread confirms grounded needs, offers a choice, and stays open past ten replies", async () => {
   const ai = provider();
   let observation = blank;
-  ai.reviewExploration = async () => observation;
+  let reviews = 0;
+  let drafts = 0;
+  ai.reviewExploration = async () => {
+    reviews++;
+    return observation;
+  };
+  const draftReply = ai.streamReply;
+  ai.streamReply = (...args) => {
+    drafts++;
+    return draftReply(...args);
+  };
   const gate = new Gate(new LuaStore(), cap);
   const sid = id(),
     cid = id();
@@ -186,9 +196,14 @@ test("the guided thread confirms grounded needs, offers a choice, and stays open
   });
   assert.equal(proposal.explorationView?.conversationStage, "NEED_VALIDATION");
   assert.ok(proposal.progress.exploration?.pending);
+  const callsBeforeConfirmation = { reviews, drafts };
   const confirmed = await turn("네. 그게 맞아요.");
   assert.equal(confirmed.explorationView?.conversationStage, "REFRAMING");
-  assert.equal(confirmed.explorationView?.offerRecord, false);
+  assert.equal(confirmed.explorationView?.offerRecord, true);
+  assert.equal(confirmed.progress.questions, proposal.progress.questions);
+  assert.equal(confirmed.explorationView?.nextQuestion, null);
+  assert.equal(confirmed.progress.completed, false);
+  assert.deepEqual({ reviews, drafts }, callsBeforeConfirmation);
   const perspective =
     "답이 늦으면 무시라고 생각했는데, 소중한 사람이라고 느끼고 싶어서 서운했구나.";
   const ready = await turn(perspective, { reframe: perspective, insight: perspective });
@@ -206,7 +221,9 @@ test("the guided thread confirms grounded needs, offers a choice, and stays open
   ])
     assert.equal((await turn(text)).progress.completed, false);
   assert.equal(progress.turns, 11);
+  const reviewsBeforeRecord = reviews;
   const recorded = await turn("", {}, "record");
+  assert.equal(reviews, reviewsBeforeRecord);
   assert.equal(recorded.explorationView?.completionReason, "explored");
   assert.deepEqual(recorded.explorationView?.finalRecord?.needs, [
     "관계에서 소중하게 여겨지고 싶은 마음",

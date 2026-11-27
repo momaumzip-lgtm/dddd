@@ -250,10 +250,12 @@ function nextStage(
 function isReady(evidence: GuidedEvidence) {
   return Boolean(
     evidence.situation &&
-    (evidence.selectedEmotion || evidence.expressedEmotions.length) &&
-    evidence.meaning &&
-    evidence.confirmedNeeds.length &&
-    (evidence.insight || evidence.reframe),
+    (evidence.selectedEmotion ||
+      evidence.expressedEmotions.length ||
+      evidence.thought ||
+      evidence.meaning ||
+      evidence.insight) &&
+    evidence.confirmedNeeds.length,
   );
 }
 function viewFor(
@@ -384,6 +386,11 @@ export async function runGuidedTurn({
         latest,
       ));
   const previousQuestion = state.pending;
+  const briefAffirmation =
+    previousQuestion?.question[0] === index - 1 &&
+    /^(?:네|응|예|맞아(?:요)?|맞습니다|그렇죠)(?:(?:그게)?맞(?:아(?:요)?|습니다))?$/.test(
+      compact(currentText),
+    );
   const initialPace = selectionContext(emotion);
   const firstExchange = !history.length && !wantsRecord;
   // The opening question can use the user's own scene. Deeper evidence gets extracted
@@ -399,14 +406,12 @@ export async function runGuidedTurn({
     initialPace.category !== "positive" &&
     !positiveStory(currentText);
   const recordNeedsEvidence =
-    wantsRecord &&
-    recent.some((message) => message.role === "user") &&
-    (!before.confirmedNeeds.length || !(before.insight || before.reframe));
+    wantsRecord && recent.some((message) => message.role === "user") && !isReady(before);
   let observation: Observation | undefined;
   if (
     !declinesRecord &&
     !deferOpeningReview &&
-    (recordNeedsEvidence || (currentText && !needsNoQuestions))
+    (recordNeedsEvidence || (currentText && !needsNoQuestions && !briefAffirmation))
   ) {
     await slot.extra();
     try {
@@ -606,10 +611,30 @@ export async function runGuidedTurn({
     };
   }
 
+  const answerWithoutQuestion =
+    inputUnflagged === true &&
+    !control &&
+    !plan.asksForPracticalHelp &&
+    !plan.clarifyQuestion &&
+    !continueRequest.test(currentText) &&
+    !/[?？]/.test(currentText) &&
+    !openingRiskCue.test(currentText) &&
+    isReady(evidence);
+  if (answerWithoutQuestion && !isReady(before) && !state.deferred && !needsNoQuestions) {
+    return {
+      body: "그때 무엇이 중요했는지 조금 더 선명해졌어요. 원하면 여기까지 마음 기록으로 남겨 보세요.",
+      state,
+      view: viewFor(state, evidence, emotion, turns, null, null, null),
+      safety: "normal" as Safety,
+      questions: 0,
+    };
+  }
+  const listening = needsNoQuestions || answerWithoutQuestion;
+
   const emotionContext = selectionContext(
     evidence.selectedEmotion || state.start === 0 ? emotion : unknownEmotion,
   );
-  const openingPace = !history.length && !needsNoQuestions && !plan.asksForPracticalHelp;
+  const openingPace = !history.length && !listening && !plan.asksForPracticalHelp;
   const statedPositive =
     evidence.expressedEmotions.some((text) => positiveWords.test(text) || /좋았/.test(text)) ||
     (openingPace && positiveWords.test(currentText));
@@ -659,7 +684,7 @@ export async function runGuidedTurn({
     !openingPace &&
     inputUnflagged &&
     !control &&
-    !needsNoQuestions &&
+    !listening &&
     !plan.clarifyQuestion &&
     !plan.asksForPracticalHelp &&
     !openingRiskCue.test(currentText) &&
@@ -735,10 +760,9 @@ export async function runGuidedTurn({
         {
           emotion: emotionContext,
           forceComplete: false,
-          listening: needsNoQuestions,
-          openingQuestion: !history.length && !needsNoQuestions,
-          followupQuestion:
-            Boolean(history.length) && !needsNoQuestions && !plan.asksForPracticalHelp,
+          listening,
+          openingQuestion: !history.length && !listening,
+          followupQuestion: Boolean(history.length) && !listening && !plan.asksForPracticalHelp,
           asksForPracticalHelp: plan.asksForPracticalHelp,
           turn: turns,
           previousSafety: "normal",
@@ -789,11 +813,7 @@ export async function runGuidedTurn({
             text,
           )),
     );
-    const proposed = paceCheck
-      ? paceQuestion
-      : needsNoQuestions
-        ? ""
-        : lastQuestion(fields.at(-1) || "");
+    const proposed = paceCheck ? paceQuestion : listening ? "" : lastQuestion(fields.at(-1) || "");
     const repeated = repeatsQuestion(proposed);
     repeatedQuestion ||= repeated;
     if (
@@ -815,8 +835,7 @@ export async function runGuidedTurn({
       : [...sentenceBoundaries.segment(plain)][0]?.segment.trim();
     const sentences = [reflection, proposed].filter(Boolean);
     if (!plan.asksForPracticalHelp && sentences.join(" ").length > 200) continue;
-    if (!sentences.length || (!needsNoQuestions && !plan.asksForPracticalHelp && !proposed))
-      continue;
+    if (!sentences.length || (!listening && !plan.asksForPracticalHelp && !proposed)) continue;
     const checked: StreamReply = { ...raw, sentences };
     try {
       const [attributed, flags] = await Promise.all([
@@ -899,7 +918,7 @@ export async function runGuidedTurn({
     candidate &&
     basis &&
     state.stage === "NEED_VALIDATION" &&
-    !needsNoQuestions &&
+    !listening &&
     (!question || !compact(question).includes(compact(candidate)))
   ) {
     const fallback = `그때 느낀 마음이 ‘${candidate.slice(0, 100)}’에 가까웠을까요?`;

@@ -108,7 +108,7 @@ export class Gate {
           throw new AppError(
             429,
             "CHAT_BUDGET",
-            "지금은 새 답변을 만들기 어려워요. 잠시 후 다시 요청하거나 지금까지 나눈 마음을 정리할 수 있어요.",
+            "오늘 새 답변 한도에 도달했어요. 한국 시간 자정 이후에 다시 답변을 받을 수 있어요.",
           );
         this.check(code);
       },
