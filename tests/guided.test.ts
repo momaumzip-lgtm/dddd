@@ -540,3 +540,41 @@ test("an unsure answer changes an interpretation question to a concrete action",
   assert.equal(attempts, 2);
   assert.equal(result.explorationView?.nextQuestion, "그 뒤 친구에게 뭐라고 하셨어요?");
 });
+
+test("a question about the user’s actions cannot come back as a question about what they said", async () => {
+  const ai = provider();
+  let attempts = 0;
+  ai.streamReply = async () => ({
+    mode: "continue",
+    safety: "normal",
+    sentences: [
+      ++attempts === 1
+        ? "그 생각이 든 뒤, 친구에게 이어서 무슨 말을 하셨나요?"
+        : "그때 친구에게 어떤 태도를 바라셨나요?",
+    ],
+  });
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      control: "unsure",
+      progress: { ...freshProgress, turns: 1 },
+      emotion: unknownEmotion,
+      history: [
+        { role: "user", content: "친구가 제 말을 중간에 끊었어요." },
+        { role: "assistant", content: "그때 친구 앞에서 실제로 어떻게 반응하셨나요?" },
+      ],
+      message: controlText.unsure,
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.equal(result.explorationView?.nextQuestion, "그때 친구에게 어떤 태도를 바라셨나요?");
+});
