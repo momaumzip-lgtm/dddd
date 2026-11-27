@@ -105,20 +105,20 @@ const questionFocus = (text: string): keyof typeof focusLabels | null => {
   const phrase = compact(text);
   if (futureCareQuestion(phrase)) return "futureCare";
   if (
-    /(?:생각|어떤말).{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각|어떤(?:뜻|의미|신호)처럼|(?:뜻|신호|의미)처럼느껴/.test(
+    /(?:생각|어떤말).{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각|어떤(?:뜻|의미|신호)처럼|(?:뜻|신호|의미)처럼느껴|어떻게대하.{0,12}처럼느껴/.test(
       phrase,
     )
   )
     return "thought";
   if (
-    /뭐라고.{0,5}했|어떻게.{0,8}(?:행동|하셨어요|반응)|어떤반응을보이셨|실제로.{0,5}(?:하셨|했어)/.test(
+    /뭐라고.{0,5}했|어떻게.{0,8}(?:행동|하셨어요|반응)|어떤반응을(?:보이셨|하셨)|(?:말|대화)(?:을|를)?(?:계속|이어).{0,10}(?:했|가셨|갈수있)|실제로.{0,5}(?:하셨|했어)/.test(
       phrase,
     )
   )
     return "reaction";
   if (
     !/달라졌|달랐|어떤의미|뜻이었|도움이됐|왜.{0,10}중요/.test(phrase) &&
-    (/바랐던|어떤점이달라지면.{0,34}느끼|주길바랐|듣고싶|받고싶|해줬으면|해주길바|들어주길바|들어줬으면/.test(
+    (/바랐던|어떤점이달라지면.{0,34}느끼|(?:주|알아차리|알아채)길바(?:라|랐|란)|듣고싶|받고싶|해줬으면|해주길바|들어주길바|들어줬으면/.test(
       phrase,
     ) ||
       /(?:반응|태도|말|행동|어떻게).{0,30}(?:바라|바랐|원했|기대|해주|해줬|들어주)/.test(phrase))
@@ -800,14 +800,15 @@ export async function runGuidedTurn({
     }
   }
   if (!body && openingTimedOut) {
+    const interrupted = /(?:제\s*말|내\s*말|말을).{0,14}끊/.test(currentText);
     question = closeToHurt
       ? lightWish.lightQuestion
       : (focus?.lightQuestion ??
         (!evidence.situation
           ? "오늘 마음에 남은 장면 하나부터 나눠 주실래요?"
-          : emotionContext.pace === "low"
-            ? "그 장면에서 유난히 마음에 남은 말이나 행동이 있었나요?"
-            : "그 일이 있었을 때, 어떤 생각이 가장 먼저 떠올랐나요?"));
+          : interrupted
+            ? "말이 끊긴 뒤에도 하려던 이야기를 계속할 수 있었어요?"
+            : "그 장면에서 특히 마음에 남은 말이나 행동이 있었나요?"));
     body = question;
   }
   if (!body && repeatedQuestion && evidence.wish && avoid.has("wish")) {

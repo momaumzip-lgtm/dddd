@@ -422,7 +422,7 @@ test("an unflagged opening still asks a real question when its generation budget
   );
   assert.equal(result.progress.completed, false);
   assert.equal(result.safety, "normal");
-  assert.match(result.body, /생각.*\?$/);
+  assert.match(result.body, /말이 끊긴 뒤.*\?$/);
   assert.equal(result.explorationView?.nextQuestion, result.body);
 });
 test("very strong first messages offer a real pace choice only after an unflagged input screen", async () => {
@@ -501,4 +501,42 @@ test("the next turn cannot paraphrase an earlier question even after a change of
   );
   assert.equal(attempts, 2);
   assert.match(result.explorationView?.nextQuestion || "", /실제로 어떻게/);
+});
+
+test("an unsure answer changes an interpretation question to a concrete action", async () => {
+  const ai = provider();
+  let attempts = 0;
+  ai.streamReply = async () => ({
+    mode: "continue",
+    safety: "normal",
+    sentences: [
+      ++attempts === 1
+        ? "그 행동이 나를 어떻게 대하는 것처럼 느껴졌나요?"
+        : "그 뒤 친구에게 뭐라고 하셨어요?",
+    ],
+  });
+  const result = await runStreamingChat(
+    {
+      sid: id(),
+      cid: id(),
+      rid: id(),
+      revision: 0,
+      safety: "normal",
+      guided: true,
+      action: "chat",
+      control: "unsure",
+      progress: { ...freshProgress, turns: 1 },
+      emotion: unknownEmotion,
+      history: [
+        { role: "user", content: "친구가 제 말을 중간에 끊었어요." },
+        { role: "assistant", content: "그 순간 친구의 행동이 어떤 뜻처럼 느껴졌나요?" },
+      ],
+      message: controlText.unsure,
+    },
+    new Gate(new LuaStore(), cap),
+    ai,
+    () => {},
+  );
+  assert.equal(attempts, 2);
+  assert.equal(result.explorationView?.nextQuestion, "그 뒤 친구에게 뭐라고 하셨어요?");
 });
