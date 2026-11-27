@@ -105,16 +105,22 @@ const questionFocus = (text: string): keyof typeof focusLabels | null => {
   const phrase = compact(text);
   if (futureCareQuestion(phrase)) return "futureCare";
   if (
-    /(?:생각|어떤말).{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각|어떤(?:뜻|의미|신호)처럼/.test(
+    /(?:생각|어떤말).{0,8}(?:떠올|스쳤|들었)|(?:떠오른|스친).{0,8}생각|어떤(?:뜻|의미|신호)처럼|(?:뜻|신호|의미)처럼느껴/.test(
       phrase,
     )
   )
     return "thought";
-  if (/뭐라고.{0,5}했|어떻게.{0,8}(?:행동|하셨어요)|실제로.{0,5}(?:하셨|했어)/.test(phrase))
+  if (
+    /뭐라고.{0,5}했|어떻게.{0,8}(?:행동|하셨어요|반응)|어떤반응을보이셨|실제로.{0,5}(?:하셨|했어)/.test(
+      phrase,
+    )
+  )
     return "reaction";
   if (
     !/달라졌|달랐|어떤의미|뜻이었|도움이됐|왜.{0,10}중요/.test(phrase) &&
-    (/바랐던|듣고싶|받고싶|해줬으면|해주길바|들어주길바|들어줬으면/.test(phrase) ||
+    (/바랐던|어떤점이달라지면.{0,34}느끼|주길바랐|듣고싶|받고싶|해줬으면|해주길바|들어주길바|들어줬으면/.test(
+      phrase,
+    ) ||
       /(?:반응|태도|말|행동|어떻게).{0,30}(?:바라|바랐|원했|기대|해주|해줬|들어주)/.test(phrase))
   )
     return "wish";
@@ -618,9 +624,11 @@ export async function runGuidedTurn({
     .filter(Boolean);
   const previousFocus = questionFocus(oldQuestions.at(-1) || "");
   const avoid = new Set<keyof typeof focusLabels>();
-  if (previousFocus) avoid.add(previousFocus);
+  for (const priorQuestion of oldQuestions.slice(-3)) {
+    const priorFocus = questionFocus(priorQuestion);
+    if (priorFocus) avoid.add(priorFocus);
+  }
   if (evidence.thought) avoid.add("thought");
-  if (oldQuestions.slice(-2).some(futureCareQuestion)) avoid.add("futureCare");
   if (evidence.wish) avoid.add("wish");
   const repeatsQuestion = (question: string) => {
     if (!question) return false;
@@ -815,8 +823,11 @@ export async function runGuidedTurn({
     evidence.situation &&
     (previousFocus === "thought" || (previousFocus === "wish" && evidence.thought))
   ) {
-    body = "그 일이 있고 나서 바로 어떻게 하셨어요?";
-    question = body;
+    const alternative = "그 일이 있고 나서 바로 어떻게 하셨어요?";
+    if (!repeatsQuestion(alternative)) {
+      body = alternative;
+      question = alternative;
+    }
   }
   if (!body && closeToHurt) {
     question = lightWish.lightQuestion;

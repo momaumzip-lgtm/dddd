@@ -145,6 +145,7 @@ export async function runStreamingChat(
     emotion: EmotionSelection;
     guided?: boolean;
     sessionUsage?: boolean;
+    requestStartedAt?: number;
     control?: ExplorationControl;
   },
   gate: Gate,
@@ -252,6 +253,10 @@ export async function runStreamingChat(
       mode = "safety";
     } else if (!body && args.guided) {
       const start = performance.now();
+      const requestStartedAt = args.requestStartedAt ?? started;
+      const slowSetup = started - requestStartedAt + admissionMs >= 150;
+      // Keep more room for transport and rendering when request setup is slow.
+      const openingDeadline = requestStartedAt + (slowSetup ? 1500 : 2050);
       const outcome = await runGuidedTurn({
         ai,
         slot: allowance,
@@ -264,7 +269,7 @@ export async function runStreamingChat(
         restart: args.action === "continue",
         turns,
         inputUnflagged,
-        openingDeadline: started + 2100,
+        openingDeadline,
       });
       exploration = outcome.state;
       explorationView = outcome.view;

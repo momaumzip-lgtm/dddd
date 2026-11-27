@@ -456,7 +456,7 @@ test("very strong first messages offer a real pace choice only after an unflagge
   assert.match(result.body, /이어가도 괜찮으세요/);
   assert.equal(result.progress.completed, false);
 });
-test("the next turn cannot paraphrase a prior question about the reaction the user wanted", async () => {
+test("the next turn cannot paraphrase an earlier question even after a change of focus", async () => {
   const ai = provider();
   let attempts = 0;
   ai.reviewExploration = async () => ({
@@ -485,11 +485,13 @@ test("the next turn cannot paraphrase a prior question about the reaction the us
       safety: "normal",
       guided: true,
       action: "chat",
-      progress: { ...freshProgress, turns: 1 },
+      progress: { ...freshProgress, turns: 2 },
       emotion: unknownEmotion,
       history: [
         { role: "user", content: "친구가 말을 끊었어요." },
         { role: "assistant", content: "친구가 어떤 태도로 들어주길 바라셨나요?" },
+        { role: "user", content: "그건 잘 모르겠어요." },
+        { role: "assistant", content: "친구가 말을 끊은 뒤 기분은 어땠어요?" },
       ],
       message: "친구가 나를 무시하나 싶었어요.",
     },

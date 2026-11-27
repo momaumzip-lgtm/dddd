@@ -105,6 +105,7 @@ export async function POST(req: NextRequest) {
                 emotion: p.emotion,
                 guided: p.guided,
                 sessionUsage: p.guided,
+                requestStartedAt: arrived,
                 control: p.control,
               },
               new Gate(new DatabaseStore(), c),
