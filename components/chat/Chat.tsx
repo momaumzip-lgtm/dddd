@@ -511,7 +511,12 @@ export default function Chat({ config }: { config: PublicConfig }) {
     });
   }
   return (
-    <main ref={shell} data-chat-open={started ? "true" : undefined} className="app-shell">
+    <main
+      ref={shell}
+      data-chat-open={started ? "true" : undefined}
+      data-restoring="true"
+      className="app-shell"
+    >
       <header className="topbar">
         <a
           className="brand"
