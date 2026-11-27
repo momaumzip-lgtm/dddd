@@ -541,43 +541,52 @@ test("an unsure answer changes an interpretation question to a concrete action",
   assert.equal(result.explorationView?.nextQuestion, "그 뒤 친구에게 뭐라고 하셨어요?");
 });
 
-test("a question about the user’s actions cannot come back as a question about what they said", async () => {
-  const ai = provider();
-  let attempts = 0;
-  ai.streamReply = async () => ({
-    mode: "continue",
-    safety: "normal",
-    sentences: [
-      ++attempts === 1
-        ? "그 생각이 든 뒤, 친구에게 이어서 무슨 말을 하셨나요?"
-        : "그때 친구에게 어떤 태도를 바라셨나요?",
-    ],
-  });
-  const result = await runStreamingChat(
-    {
-      sid: id(),
-      cid: id(),
-      rid: id(),
-      revision: 0,
+for (const { name, earlier, paraphrase } of [
+  {
+    name: "a question about the user's actions cannot come back as a question about what they said",
+    earlier: "그때 친구 앞에서 실제로 어떻게 반응하셨나요?",
+    paraphrase: "그 생각이 든 뒤, 친구에게 이어서 무슨 말을 하셨나요?",
+  },
+  {
+    name: "an opening about continuing a story cannot return as a question about continuing to speak",
+    earlier: "말이 끊긴 뒤에도 하려던 이야기를 계속할 수 있었어요?",
+    paraphrase: "그때 말씀을 계속 이어갈 수 있었나요?",
+  },
+]) {
+  test(name, async () => {
+    const ai = provider();
+    let attempts = 0;
+    ai.streamReply = async () => ({
+      mode: "continue",
       safety: "normal",
-      guided: true,
-      action: "chat",
-      control: "unsure",
-      progress: { ...freshProgress, turns: 1 },
-      emotion: unknownEmotion,
-      history: [
-        { role: "user", content: "친구가 제 말을 중간에 끊었어요." },
-        { role: "assistant", content: "그때 친구 앞에서 실제로 어떻게 반응하셨나요?" },
-      ],
-      message: controlText.unsure,
-    },
-    new Gate(new LuaStore(), cap),
-    ai,
-    () => {},
-  );
-  assert.equal(attempts, 2);
-  assert.equal(result.explorationView?.nextQuestion, "그때 친구에게 어떤 태도를 바라셨나요?");
-});
+      sentences: [++attempts === 1 ? paraphrase : "그때 친구에게 어떤 태도를 바라셨나요?"],
+    });
+    const result = await runStreamingChat(
+      {
+        sid: id(),
+        cid: id(),
+        rid: id(),
+        revision: 0,
+        safety: "normal",
+        guided: true,
+        action: "chat",
+        control: "unsure",
+        progress: { ...freshProgress, turns: 1 },
+        emotion: unknownEmotion,
+        history: [
+          { role: "user", content: "친구가 제 말을 중간에 끊었어요." },
+          { role: "assistant", content: earlier },
+        ],
+        message: controlText.unsure,
+      },
+      new Gate(new LuaStore(), cap),
+      ai,
+      () => {},
+    );
+    assert.equal(attempts, 2);
+    assert.equal(result.explorationView?.nextQuestion, "그때 친구에게 어떤 태도를 바라셨나요?");
+  });
+}
 
 test("a wish to be heard leads to the user's own reason and is asked once", async () => {
   const ai = provider();
@@ -627,7 +636,7 @@ test("a wish to be heard leads to the user's own reason and is asked once", asyn
     safety: "normal",
     sentences: [
       ++attempts === 1
-        ? "끝까지 들어줬다면 그때 기분이 좀 달라졌을까요?"
+        ? "말을 끝까지 할 기회가 있었다면, 그 순간 마음이 어떻게 달라졌을 것 같아요?"
         : "그 일을 돌아보니 지금 친구와의 대화에서 새롭게 보이는 점이 있나요?",
     ],
   });
